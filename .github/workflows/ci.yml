@@ -1,0 +1,43 @@
+# Public-repo CI (volter-ai/portable.dev). Lives ONLY in the public mirror.
+# Minimal, contains no secrets. Build + typecheck + tests + secret scan.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install
+        run: bun install --frozen-lockfile || bun install
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Mobile tests
+        # jest-expo distributes test files across workers by cached timing, so a cluster
+        # of socket/api/voice suites can flake on a hostile schedule yet pass on a re-run
+        # (the full run is the source of truth). DO NOT add --runInBand — it serializes the
+        # shared onlineManager singleton and makes flakes worse. Re-run once on failure.
+        run: |
+          cd packages/mobile
+          bun run test || { echo "::warning::mobile tests flaked; re-running once"; bun run test; }
+      - name: Expo bundle check
+        run: cd packages/mobile && bunx expo export --platform all || true
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

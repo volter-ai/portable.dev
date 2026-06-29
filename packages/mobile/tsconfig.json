@@ -1,0 +1,16 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    // Jest globals (describe/it/expect/jest) for __tests__/. TS 6.0 no longer
+    // auto-includes @types/jest here, so list it explicitly. Expo ambient types
+    // still load via expo-env.d.ts's /// <reference types="expo/types" />, which
+    // is independent of this `types` array.
+    "types": ["jest"]
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules"]
+}

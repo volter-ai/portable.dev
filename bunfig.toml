@@ -1,0 +1,43 @@
+# Bun configuration
+# https://bun.sh/docs/runtime/bunfig
+
+[test]
+# Test timeout (2 minutes in milliseconds)
+timeout = 120000
+
+# Preload file - installs global fetch mock to block external API calls
+# This runs BEFORE all tests and intercepts fetch() to external APIs
+preload = ["./packages/api/tests/setup/preload.ts"]
+
+# Coverage is opt-in via the --coverage flag (keeps `bun test` fast in CI shards
+# and local dev). Per-shard coverage is meaningless anyway since each CI shard
+# only exercises one slice of the code. See issue #1286.
+coverage = false
+coverageThreshold = 0.70
+
+# Test file patterns to ignore.
+# Bun 1.3.6 does NOT honor this key - a bare `bun test` still discovers
+# everything, including packages/mobile's Jest tests, and crashes parsing
+# react-native's Flow-typed sources (issue #1375). The real exclusion lives in
+# discover() in scripts/test-shard.sh; run the full suite via `bun run test:all`.
+# Kept (and in sync with discover()) in case a future bun implements it.
+ignore = [
+  "temp/**",
+  "**/node_modules/**",
+  "**/dist/**",
+  "**/*.spec.ts",
+  "./worktree/**",
+  "worktree/**",
+  "**/worktree/**",
+  "packages/mobile/**"
+]
+
+# Coverage exclusions (files to exclude from coverage reporting)
+coveragePathIgnorePatterns = [
+  "**/tests/**",
+  "**/*.test.ts",
+  "**/setup/**",
+  "**/mocks/**",
+  "**/helpers/**",
+  "worktree/**"
+]

@@ -1,0 +1,107 @@
+{
+  "expo": {
+    "name": "Portable",
+    "slug": "portable-mobile",
+    "version": "3.1.0",
+    "orientation": "portrait",
+    "scheme": "portable",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "icon": "./assets/images/icon.png",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "dev.portable.app",
+      "appleTeamId": "R78F2929PW",
+      "googleServicesFile": "./GoogleService-Info.plist",
+      "icon": {
+        "light": "./assets/images/icon.png",
+        "dark": "./assets/images/icon-dark.png"
+      },
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSSupportsLiveActivities": true
+      }
+    },
+    "android": {
+      "package": "dev.portable.app",
+      "googleServicesFile": "./google-services.json",
+      "edgeToEdgeEnabled": true,
+      "permissions": ["android.permission.RECORD_AUDIO", "android.permission.CAMERA"],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#F7F3DF"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Portable accesses your photos so you can attach images to a chat."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Portable uses the camera so you can capture a photo to attach to a chat."
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Portable uses the microphone so you can dictate messages.",
+          "speechRecognitionPermission": "Portable transcribes your speech so you can dictate messages — on-device by default, or off-device when on-device recognition isn't available or you choose Cloud mode.",
+          "androidSpeechServicePackages": ["com.google.android.googlequicksearchbox"]
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#6366f1",
+          "androidMode": "default",
+          "androidCollapsedTitle": "Portable"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon-light.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#FFFFFF",
+          "dark": {
+            "image": "./assets/images/splash-icon-dark.png",
+            "backgroundColor": "#000000"
+          }
+        }
+      ],
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://sentry.io/",
+          "note": "Use SENTRY_AUTH_TOKEN env to authenticate with Sentry (NEVER put the token here).",
+          "organization": "oliver-volter-maybe",
+          "project": "4511016585199616"
+        }
+      ],
+      "@bacons/apple-targets",
+      "@react-native-firebase/app",
+      "@react-native-firebase/messaging",
+      "./plugins/withModularHeaders"
+    ],
+    "experiments": {
+      "typedRoutes": false
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "60ecdd1a-87ba-468e-81a3-80a11b107a53"
+      }
+    },
+    "owner": "volter-ai"
+  }
+}

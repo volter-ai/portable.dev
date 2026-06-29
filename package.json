@@ -1,0 +1,87 @@
+{
+  "name": "portable",
+  "private": true,
+  "version": "3.1.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "trustedDependencies": [
+    "@sentry/cli"
+  ],
+  "scripts": {
+    "postinstall": "patch-package",
+    "portable": "bun --cwd packages/launcher start",
+    "cli": "bun --cwd packages/launcher start",
+    "cli:preview": "bun --cwd packages/launcher preview",
+    "build:portable": "bun scripts/build-portable.ts",
+    "smoke:launcher": "bun scripts/smoke-launcher.ts",
+    "start": "bun --cwd packages/api start",
+    "start:api": "bun --cwd packages/api start",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "typecheck": "bun --cwd packages/api typecheck && bun --cwd packages/launcher typecheck && bun --cwd packages/mobile typecheck",
+    "pack:cli": "bun run build:portable && cd dist-portable && npm pack",
+    "publish:cli": "bun run build:portable && cd dist-portable && npm publish"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/react-syntax-highlighter": "^15.5.13",
+    "@types/session-file-store": "^1.2.5",
+    "@types/uuid": "^11.0.0",
+    "@types/ws": "^8.5.12",
+    "@typescript-eslint/eslint-plugin": "^8.53.1",
+    "@typescript-eslint/parser": "^8.53.1",
+    "@typescript-eslint/utils": "^8.53.1",
+    "concurrently": "^9.1.2",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
+    "patch-package": "^8.0.1",
+    "prettier": "^3.8.1",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "@clerk/backend": "^2.29.1",
+    "@git-diff-view/file": "^0.0.35",
+    "@git-diff-view/react": "^0.0.35",
+    "@rollup/rollup-linux-arm64-gnu": "^4.59.0",
+    "@types/dockerode": "^3.3.44",
+    "@types/mime-types": "^3.0.1",
+    "@types/react-window": "^2.0.0",
+    "cors": "^2.8.6",
+    "dockerode": "^4.0.9",
+    "dotenv": "^17.2.3",
+    "googleapis": "^167.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "mime-types": "^3.0.2",
+    "react-data-grid": "^7.0.0-beta.59",
+    "react-swipeable": "^7.0.2",
+    "react-syntax-highlighter": "^15.6.6",
+    "react-virtualized-auto-sizer": "^1.0.26",
+    "react-window": "^2.2.3",
+    "redis": "^5.8.3",
+    "resend": "^6.6.0",
+    "session-file-store": "^1.5.0",
+    "socket.io": "^4.8.1",
+    "uuid": "^13.0.0",
+    "ws": "^8.18.0",
+    "zod": "^4.3.5"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "prettier --write"
+    ],
+    "*.{js,jsx}": [
+      "prettier --write"
+    ],
+    "*.{json,md}": [
+      "prettier --write"
+    ]
+  }
+}

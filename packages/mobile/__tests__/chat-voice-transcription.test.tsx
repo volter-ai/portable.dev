@@ -1,0 +1,416 @@
+/**
+ * Voice input — local-first on-device dictation (POC).
+ *
+ * Speech→text runs entirely ON-DEVICE (native STT); the recognized transcript is
+ * inserted directly — there is NO server correction round-trip. These tests inject a
+ * FAKE recognizer (no `expo-speech-recognition`, no audio, no network) and verify:
+ *
+ *   1. tapping the mic requests permission and starts recognition;
+ *   2. interim results render as the live "…" buffer; volume drives the waveform;
+ *   3. final segments accumulate, and stop assembles + inserts the full transcript;
+ *   4. permission-denied (no recognition) + the `useNativeDictation` ViewModel cases.
+ */
+
+// VoiceInput/Waveform consume useAppTheme → themeStore → MMKV. Mock it (in-memory).
+jest.mock('react-native-mmkv', () => {
+  const store = new Map<string, string>();
+  const instance = {
+    set: (k: string, v: string) => store.set(k, String(v)),
+    getString: (k: string) => store.get(k),
+    remove: (k: string) => store.delete(k),
+    clearAll: () => store.clear(),
+  };
+  return { __store: store, createMMKV: () => instance, MMKV: class {} };
+});
+
+import { act, fireEvent, render, renderHook, screen } from '@testing-library/react-native';
+import { useState } from 'react';
+import { TextInput } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+
+import {
+  VoiceInput,
+  useNativeDictation,
+  volumeToLevel,
+  type NativeSpeechRecognizer,
+  type SpeechRecognizerCallbacks,
+} from '../src/features/chat/voice';
+
+const SAFE_AREA_METRICS = {
+  frame: { x: 0, y: 0, width: 390, height: 844 },
+  insets: { top: 47, left: 0, right: 0, bottom: 34 },
+};
+
+/**
+ * A fake recognizer + controller. The `useRecognizer` hook holds the waveform `level`
+ * (driven by `emitVolume`); `emitResult` pushes interim/final results into the bound
+ * ViewModel callbacks. No native module, no audio.
+ */
+function makeFakeRecognizer(granted = true) {
+  const state = {
+    callbacks: null as SpeechRecognizerCallbacks | null,
+    setLevel: (_n: number) => {},
+    permissionRequests: 0,
+    startCalls: 0,
+    stopCalls: 0,
+    abortCalls: 0,
+    granted,
+  };
+
+  const recognizer: NativeSpeechRecognizer = {
+    requestPermission: async () => {
+      state.permissionRequests += 1;
+      return state.granted;
+    },
+    start: async (callbacks) => {
+      state.callbacks = callbacks;
+      state.startCalls += 1;
+    },
+    stop: async () => {
+      state.stopCalls += 1;
+    },
+    abort: async () => {
+      state.abortCalls += 1;
+    },
+  };
+
+  const useRecognizer = () => {
+    const [level, setLevel] = useState(0);
+    state.setLevel = setLevel;
+    return { recognizer, level };
+  };
+
+  return {
+    useRecognizer,
+    state,
+    emitResult: (transcript: string, isFinal: boolean) =>
+      act(() => state.callbacks?.onResult({ transcript, isFinal })),
+    emitVolume: (raw: number) =>
+      act(() => {
+        const lvl = volumeToLevel(raw);
+        state.setLevel(lvl);
+        state.callbacks?.onVolume?.(lvl);
+      }),
+  };
+}
+
+/** Harness: a TextInput whose value VoiceInput appends transcriptions to. */
+function VoiceHarness({
+  fake,
+  onPermissionDenied,
+}: {
+  fake: ReturnType<typeof makeFakeRecognizer>;
+  onPermissionDenied?: () => void;
+}) {
+  const [text, setText] = useState('');
+  return (
+    <>
+      <TextInput testID="harness-input" value={text} onChangeText={setText} />
+      <VoiceInput
+        useRecognizer={fake.useRecognizer}
+        onTranscription={(t) => setText((prev) => (prev ? `${prev} ${t}` : t))}
+        onPermissionDenied={onPermissionDenied}
+      />
+    </>
+  );
+}
+
+function mount(fake: ReturnType<typeof makeFakeRecognizer>, onPermissionDenied?: () => void) {
+  render(
+    <SafeAreaProvider initialMetrics={SAFE_AREA_METRICS}>
+      <VoiceHarness fake={fake} onPermissionDenied={onPermissionDenied} />
+    </SafeAreaProvider>
+  );
+}
+
+function barHeight(index: number): number {
+  const style = screen.getByTestId(`voice-waveform-bar-${index}`).props.style as Array<
+    Record<string, unknown>
+  >;
+  const heightLayer = style.find((s) => s && typeof s.height === 'number');
+  return (heightLayer?.height as number) ?? 0;
+}
+
+describe('VoiceInput — on-device dictation', () => {
+  it('requests permission, streams interim "…" text, and inserts the assembled transcript on stop', async () => {
+    const fake = makeFakeRecognizer();
+    mount(fake);
+
+    // Idle.
+    expect(screen.getByTestId('voice-input-mic')).toBeTruthy();
+    expect(screen.queryByTestId('voice-waveform')).toBeNull();
+
+    // Tap mic → permission + start.
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('voice-input-mic'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(fake.state.permissionRequests).toBe(1);
+    expect(fake.state.startCalls).toBe(1);
+    expect(screen.getByTestId('voice-input-recording')).toBeTruthy();
+    expect(screen.getByTestId('voice-live-placeholder')).toBeTruthy();
+
+    // Interim result → live pending buffer with a trailing ellipsis.
+    fake.emitResult('check the redis', false);
+    expect(screen.getByTestId('voice-live-text')).toHaveTextContent('check the redis…');
+
+    // Volume drives the waveform.
+    const quiet = barHeight(12);
+    fake.emitVolume(8);
+    expect(barHeight(12)).toBeGreaterThan(quiet);
+
+    // Finalize the first utterance, then a second one accumulates.
+    fake.emitResult('Check the Redis connection.', true);
+    fake.emitResult('Run the Playwright tests.', true);
+    expect(screen.getByTestId('voice-live-text')).toHaveTextContent(
+      'Check the Redis connection. Run the Playwright tests.'
+    );
+
+    // Stop → the full transcript is inserted; no network involved.
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('voice-input-stop'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('harness-input').props.value).toBe(
+      'Check the Redis connection. Run the Playwright tests.'
+    );
+    expect(fake.state.stopCalls).toBe(1);
+    expect(screen.getByTestId('voice-input-mic')).toBeTruthy();
+    expect(screen.queryByTestId('voice-input-recording')).toBeNull();
+  });
+
+  it('shows the existing composer text dimmed ahead of the live transcript', async () => {
+    const fake = makeFakeRecognizer();
+    render(
+      <SafeAreaProvider initialMetrics={SAFE_AREA_METRICS}>
+        <VoiceInput
+          useRecognizer={fake.useRecognizer}
+          onTranscription={() => {}}
+          existingText="already typed"
+        />
+      </SafeAreaProvider>
+    );
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('voice-input-mic'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The existing text is shown as a prefix even before any speech…
+    expect(screen.getByTestId('voice-existing-text')).toHaveTextContent('already typed');
+    // …and the live transcript renders alongside it (not replacing it).
+    fake.emitResult('and more', false);
+    expect(screen.getByTestId('voice-existing-text')).toHaveTextContent('already typed');
+    expect(screen.getByTestId('voice-live-text')).toHaveTextContent('and more…');
+  });
+
+  it('does not start recognition when permission is denied', async () => {
+    const onPermissionDenied = jest.fn();
+    const fake = makeFakeRecognizer(false);
+    mount(fake, onPermissionDenied);
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('voice-input-mic'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fake.state.permissionRequests).toBe(1);
+    expect(onPermissionDenied).toHaveBeenCalledTimes(1);
+    expect(fake.state.startCalls).toBe(0);
+    expect(screen.queryByTestId('voice-input-recording')).toBeNull();
+    expect(screen.getByTestId('voice-input-mic')).toBeTruthy();
+  });
+});
+
+describe('useNativeDictation — ViewModel', () => {
+  function fakeRecognizer(granted = true) {
+    let cb: SpeechRecognizerCallbacks | null = null;
+    const r = {
+      requestPermission: jest.fn(async () => granted),
+      start: jest.fn(async (callbacks: SpeechRecognizerCallbacks) => {
+        cb = callbacks;
+      }),
+      stop: jest.fn(async () => {}),
+      abort: jest.fn(async () => {}),
+    };
+    return {
+      recognizer: r as unknown as NativeSpeechRecognizer,
+      emit: (t: string, f: boolean) => cb?.onResult({ transcript: t, isFinal: f }),
+      endUtterance: () => cb?.onUtteranceEnd?.(),
+    };
+  }
+
+  it('preserves a paused utterance (no final) via the utterance-end flush', async () => {
+    const { recognizer, emit, endUtterance } = fakeRecognizer();
+    const onTranscription = jest.fn();
+    const { result } = renderHook(() => useNativeDictation({ recognizer, onTranscription }));
+
+    await act(async () => {
+      await result.current.start();
+    });
+    // First utterance arrives only as a PARTIAL (no isFinal), then a pause ends it.
+    act(() => emit('hello world', false));
+    act(() => endUtterance()); // pause → must commit 'hello world', not lose it
+    // Next utterance overwrites the pending buffer — but the first was already committed.
+    act(() => emit('foo bar', false));
+    await act(async () => {
+      await result.current.stop();
+    });
+
+    expect(onTranscription).toHaveBeenCalledWith('hello world foo bar');
+  });
+
+  it('does NOT duplicate when iOS delivers cumulative results across an isFinal', async () => {
+    // iOS SFSpeechRecognizer keeps results CUMULATIVE within a session — each result is
+    // the WHOLE transcript so far, including AFTER an isFinal. The old "append every final"
+    // logic re-added everything ("rewrites the whole thing"). It must REPLACE instead.
+    const { recognizer, emit } = fakeRecognizer();
+    const onTranscription = jest.fn();
+    const { result } = renderHook(() => useNativeDictation({ recognizer, onTranscription }));
+
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => {
+      emit('check the', false); // interim
+      emit('check the redis', false); // interim grows
+      emit('check the redis connection.', true); // final (cumulative)
+      emit('check the redis connection. run the tests.', true); // iOS: STILL cumulative
+    });
+    await act(async () => {
+      await result.current.stop();
+    });
+
+    expect(onTranscription).toHaveBeenCalledWith('check the redis connection. run the tests.');
+  });
+
+  it('accumulates reset chunks within ONE session (no final, no end — real Samsung trace)', async () => {
+    // The on-device engine streams partials that GROW within a chunk, then RESET to just
+    // the NEW words after a pause — with NO isFinal and NO `end` for the whole session.
+    // (Verified on a Samsung S25: "Hello!" → "Hello, hello." → " World." → " Hello!".)
+    // Each reset must COMMIT the prior chunk, not replace it (the data-loss bug).
+    const { recognizer, emit } = fakeRecognizer();
+    const onTranscription = jest.fn();
+    const { result } = renderHook(() => useNativeDictation({ recognizer, onTranscription }));
+
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => {
+      emit('Hello', false); // chunk 1 grows…
+      emit('Hello hello', false);
+      emit('World', false); // ← reset to new words (NOT cumulative) → commit "Hello hello"
+      emit('World how are you', false); // chunk 2 grows…
+      emit('I am fine', false); // ← reset → commit "World how are you"
+    });
+    await act(async () => {
+      await result.current.stop();
+    });
+
+    expect(onTranscription).toHaveBeenCalledWith('Hello hello World how are you I am fine');
+  });
+
+  it('keeps independent Android segments across an utterance boundary', async () => {
+    // Android segmented continuous: a fresh final, then a pause/end, then a NEW independent
+    // segment — both must survive (this is the path the long-press multi-sentence case hits).
+    const { recognizer, emit, endUtterance } = fakeRecognizer();
+    const onTranscription = jest.fn();
+    const { result } = renderHook(() => useNativeDictation({ recognizer, onTranscription }));
+
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => emit('first sentence.', true));
+    act(() => endUtterance()); // pause → segment boundary, auto-restart
+    act(() => emit('second sentence.', true));
+    await act(async () => {
+      await result.current.stop();
+    });
+
+    expect(onTranscription).toHaveBeenCalledWith('first sentence. second sentence.');
+  });
+
+  it('assembles multiple finalized utterances in order on stop', async () => {
+    const { recognizer, emit } = fakeRecognizer();
+    const onTranscription = jest.fn();
+    const { result } = renderHook(() => useNativeDictation({ recognizer, onTranscription }));
+
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => {
+      emit('first sentence.', true);
+      emit('second sentence.', true);
+    });
+    await act(async () => {
+      await result.current.stop();
+    });
+
+    expect(onTranscription).toHaveBeenCalledWith('first sentence. second sentence.');
+  });
+
+  it('finalizes the trailing interim on stop even without a final result', async () => {
+    const { recognizer, emit } = fakeRecognizer();
+    const onTranscription = jest.fn();
+    const { result } = renderHook(() => useNativeDictation({ recognizer, onTranscription }));
+
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => emit('trailing words', false)); // interim only — never finalized
+    await act(async () => {
+      await result.current.stop();
+    });
+
+    expect(onTranscription).toHaveBeenCalledWith('trailing words');
+  });
+
+  it('does not insert anything when permission is denied', async () => {
+    const { recognizer } = fakeRecognizer(false);
+    const onPermissionDenied = jest.fn();
+    const onTranscription = jest.fn();
+    const { result } = renderHook(() =>
+      useNativeDictation({ recognizer, onTranscription, onPermissionDenied })
+    );
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    expect(onPermissionDenied).toHaveBeenCalledTimes(1);
+    expect(result.current.phase).toBe('idle');
+    expect(onTranscription).not.toHaveBeenCalled();
+  });
+
+  it('cancel discards the dictation (abort, no insertion)', async () => {
+    const { recognizer, emit } = fakeRecognizer();
+    const onTranscription = jest.fn();
+    const { result } = renderHook(() => useNativeDictation({ recognizer, onTranscription }));
+
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => emit('discard me', true));
+    await act(async () => {
+      await result.current.cancel();
+    });
+
+    expect(recognizer.abort).toHaveBeenCalledTimes(1);
+    expect(onTranscription).not.toHaveBeenCalled();
+    expect(result.current.phase).toBe('idle');
+  });
+});
+
+describe('volumeToLevel', () => {
+  it('maps the recognizer volume range to 0..1', () => {
+    expect(volumeToLevel(-2)).toBe(0);
+    expect(volumeToLevel(10)).toBe(1);
+    expect(volumeToLevel(4)).toBeCloseTo(0.5, 5);
+    expect(volumeToLevel(-100)).toBe(0); // clamped
+    expect(volumeToLevel(NaN)).toBe(0);
+  });
+});

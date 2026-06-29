@@ -1,0 +1,7 @@
+{
+  "name": "live-activities",
+  "version": "1.0.0",
+  "description": "Local Expo module for iOS Live Activities (ActivityKit) — issue #1434",
+  "main": "index.ts",
+  "private": true
+}

@@ -1,0 +1,99 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-portable
+dist-ssr
+*.local
+data/*
+# Package dist folders
+packages/*/dist
+packages/*/node_modules
+packages/*/www
+
+# Generated TypeScript declaration files (should only be in dist/)
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.d.ts.map
+!packages/*/src/**/vite-env.d.ts
+!packages/*/src/**/env.d.ts
+# Hand-written ambient module shim (source, not a build artifact) — US-E2-002a
+!packages/api/src/types/bun-sqlite.d.ts
+
+# Gateway built onboarding app
+packages/gateway/public/onboarding
+packages/gateway/public/assets/*.js
+
+# Environment variables
+.env
+.env.local
+.env.prod
+.env.remote
+.env.backup*
+.env.terraform
+
+~
+# Temporary files (Playwright scripts, videos, auth state)
+temp/
+test-results/
+
+# Database files
+chats.db*
+chat-data/
+vibewaiting-data/
+
+# User uploads
+uploads/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+worktree/
+.sessions/
+
+# Build metadata (dev mode)
+.build-metadata/
+
+# Stray backups & editor/build artifacts (never commit — a hand-saved `Foo.ts.backup`
+# or a generated `.tsbuildinfo` is junk wherever it lands). `*.sw?` above already covers
+# vim swap; this covers the rest.
+*.backup
+*.bak
+*.orig
+*.rej
+*.tmp
+*~
+*.tsbuildinfo
+
+# Test / coverage / Expo + CLI-pack artifacts
+coverage/
+.expo/
+web-build/
+*.tgz
+
+.env.*
+
+# Dangerous utility scripts
+kill-ports.sh
+
+# Volter user folder
+.volter/user
+.worktrees
+/deploy/terraform/.terraform
+/deploy/terraform/.terraform.lock.hcl
+
+# Local email campaign working files (contains recipient PII — never commit)
+/campaign/

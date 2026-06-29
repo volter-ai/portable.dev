@@ -1,0 +1,114 @@
+{
+  "name": "@vgit2/shared",
+  "private": true,
+  "version": "3.1.0",
+  "type": "module",
+  "main": "./src/constants.ts",
+  "types": "./src/constants.ts",
+  "exports": {
+    "./i18n": {
+      "types": "./src/i18n/index.ts",
+      "default": "./src/i18n/index.ts"
+    },
+    "./constants": {
+      "types": "./src/constants.ts",
+      "default": "./src/constants.ts"
+    },
+    "./browserConstants": {
+      "types": "./src/browserConstants.ts",
+      "default": "./src/browserConstants.ts"
+    },
+    "./permissions": {
+      "types": "./src/permissions.ts",
+      "default": "./src/permissions.ts"
+    },
+    "./models": {
+      "types": "./src/models.ts",
+      "default": "./src/models.ts"
+    },
+    "./projectPrompts": {
+      "types": "./src/projectPrompts.ts",
+      "default": "./src/projectPrompts.ts"
+    },
+    "./jwt": {
+      "types": "./src/jwt.ts",
+      "default": "./src/jwt.ts"
+    },
+    "./gameRegistry": {
+      "types": "./src/gameRegistry.ts",
+      "default": "./src/gameRegistry.ts"
+    },
+    "./aiStyles": {
+      "types": "./src/aiStyles.ts",
+      "default": "./src/aiStyles.ts"
+    },
+    "./agentSetups": {
+      "types": "./src/agentSetups.ts",
+      "default": "./src/agentSetups.ts"
+    },
+    "./types": {
+      "types": "./src/types/index.ts",
+      "default": "./src/types/index.ts"
+    },
+    "./types/*": {
+      "types": "./src/types/*.ts",
+      "default": "./src/types/*.ts"
+    },
+    "./socket": {
+      "types": "./src/socket/index.ts",
+      "default": "./src/socket/index.ts"
+    },
+    "./socket/*": {
+      "types": "./src/socket/*.ts",
+      "default": "./src/socket/*.ts"
+    },
+    "./sandbox": {
+      "types": "./src/sandbox/index.ts",
+      "default": "./src/sandbox/index.ts"
+    },
+    "./sandbox/*": {
+      "types": "./src/sandbox/*.ts",
+      "default": "./src/sandbox/*.ts"
+    },
+    "./secrets": {
+      "types": "./src/secrets/index.ts",
+      "default": "./src/secrets/index.ts"
+    },
+    "./utils/autopilotHelpers": {
+      "types": "./src/utils/autopilotHelpers.ts",
+      "default": "./src/utils/autopilotHelpers.ts"
+    },
+    "./utils/pathHelpers": {
+      "types": "./src/utils/pathHelpers.ts",
+      "default": "./src/utils/pathHelpers.ts"
+    },
+    "./utils/versionUtils": {
+      "types": "./src/utils/versionUtils.ts",
+      "default": "./src/utils/versionUtils.ts"
+    },
+    "./utils/deviceDetection": {
+      "types": "./src/utils/deviceDetection.ts",
+      "default": "./src/utils/deviceDetection.ts"
+    },
+    "./analytics": {
+      "types": "./src/analytics.ts",
+      "default": "./src/analytics.ts"
+    },
+    "./mcp": {
+      "types": "./src/mcp/index.ts",
+      "default": "./src/mcp/index.ts"
+    },
+    "./sentry": {
+      "types": "./src/sentry.ts",
+      "default": "./src/sentry.ts"
+    },
+    "./cors": {
+      "types": "./src/cors.ts",
+      "default": "./src/cors.ts"
+    }
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "socket.io-client": "^4.8.1"
+  }
+}

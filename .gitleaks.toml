@@ -1,0 +1,25 @@
+# gitleaks config for the PUBLIC mirror (volter-ai/portable.dev).
+# Ships to the public repo root so the export gate AND the public CI agree.
+#
+# Extends gitleaks' default ruleset and allowlists values that are PUBLIC or
+# TEST-ONLY by design. Do NOT add anything here that is an actual live secret —
+# real per-project config (e.g. google-services.json) is excluded from the mirror
+# instead (see scripts/mirror-export.sh / mirror/config.sh NO_PUBLISH_GLOBS).
+
+title = "Portable public-mirror gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known-safe public / test-only values in the published subset"
+regexes = [
+  # Test fixtures / placeholders (not real credentials)
+  '''sk_test_placeholder''',
+  '''secret_db_pass_\d+''',
+  # Clerk PUBLISHABLE keys are public by design (they ship in every client bundle)
+  '''pk_(live|test)_[A-Za-z0-9_\-]+''',
+  # Supabase local-dev DEMO JWTs (iss: "supabase-demo" → identical for every
+  # Supabase install; not a real secret). Matches the base64 of {"iss":"supabase-demo
+  '''eyJpc3MiOiJzdXBhYmFzZS1kZW1v''',
+]
