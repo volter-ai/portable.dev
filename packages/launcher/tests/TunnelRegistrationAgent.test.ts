@@ -476,7 +476,7 @@ describe('config + pc identity resolvers', () => {
 
   it('resolveRelayBaseUrl falls back to the default online gateway', () => {
     delete process.env.PORTABLE_RELAY_URL;
-    expect(resolveRelayBaseUrl()).toBe('https://app.portable-dev.com');
+    expect(resolveRelayBaseUrl()).toBe('https://app.portable.dev');
   });
 
   it('resolvePcLabel honours PORTABLE_PC_LABEL, else the hostname', () => {

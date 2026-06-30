@@ -57,10 +57,6 @@ export function QRScannerGate({ onPayload, onCancel }: QRScannerGateProps) {
   // Validate a decoded QR string; valid → bubble up, invalid → error+retry.
   const submit = (raw: string) => {
     const payload = parseQrPayload(raw);
-    console.warn(
-      '[QRDBG] parseQrPayload →',
-      payload ? `OK pcId=${payload.pcId} gw=${payload.gatewayBase}` : 'NULL (invalid)'
-    );
     if (!payload) {
       setError(
         "That QR code isn't a valid Portable pairing code. Run `portable start` on your computer and scan the QR shown in the terminal."

@@ -44,11 +44,17 @@ function makeDeps(trace: Trace) {
   };
 
   // Fake cloudflared supervisor so the TunnelRouter never spawns a real binary.
+  // Mirrors the real CloudflaredTunnel: onUrl fires (synchronously) BEFORE
+  // waitForFirstUrl's promise resolves, so TunnelRouter.handleUrl — and the
+  // registration handoff Launcher.boot() now awaits — really runs in these tests
+  // instead of only resolving via waitForFirstRegistration's timeout fallback.
+  let onUrlCb: ((url: string) => void) | undefined;
   const fakeCloudflared = {
     started: false,
     async start() {
       this.started = true;
       trace.order.push('tunnel.start');
+      onUrlCb?.('https://fake-tunnel.trycloudflare.com');
     },
     async waitForFirstUrl() {
       return 'https://fake-tunnel.trycloudflare.com';
@@ -140,7 +146,10 @@ function makeDeps(trace: Trace) {
       capturedReviewerToken = reviewerToken;
       tunnel = new TunnelRouter({
         apiBaseUrl,
-        makeCloudflaredTunnel: () => fakeCloudflared as never,
+        makeCloudflaredTunnel: (opts) => {
+          onUrlCb = opts.onUrl;
+          return fakeCloudflared as never;
+        },
         log: () => {},
       });
       return tunnel;
@@ -248,6 +257,125 @@ describe('Launcher.boot', () => {
       phase: 'pairing',
       loopbackUrl: 'http://localhost:54321/',
     });
+  });
+
+  it('does NOT show the pairing QR/loopback page until the tunnel registration handoff settles', async () => {
+    // Regression test for the premature-QR bug: the launcher used to render the QR
+    // and serve the loopback page the instant cloudflared printed a URL, while the
+    // registration agent's DNS-verify + /tunnel/register POST was still running in
+    // the background — so a user who scanned immediately hit a PC the relay didn't
+    // know how to route to yet. boot() must now park on TunnelRouter's first
+    // registration handoff before reaching the pairing/ready steps.
+    const trace: Trace = { order: [] };
+    const { deps } = makeDeps(trace);
+
+    let resolveRegistration!: () => void;
+    const registrationGate = new Promise<void>((resolve) => {
+      resolveRegistration = resolve;
+    });
+    let onUrlCb: ((url: string) => void) | undefined;
+    const fakeCloudflared = {
+      started: false,
+      async start() {
+        this.started = true;
+        trace.order.push('tunnel.start');
+        onUrlCb?.('https://fake-tunnel.trycloudflare.com');
+      },
+      async waitForFirstUrl() {
+        return 'https://fake-tunnel.trycloudflare.com';
+      },
+      async stop() {
+        this.started = false;
+      },
+      getPublicUrl() {
+        return 'https://fake-tunnel.trycloudflare.com';
+      },
+      isRunning() {
+        return this.started;
+      },
+    };
+
+    deps.makeTunnelRouter = (apiBaseUrl: string) =>
+      new TunnelRouter({
+        apiBaseUrl,
+        onTunnelUrl: async () => {
+          trace.order.push('registration.started');
+          await registrationGate;
+          trace.order.push('registration.settled');
+        },
+        makeCloudflaredTunnel: (opts) => {
+          onUrlCb = opts.onUrl;
+          return fakeCloudflared as never;
+        },
+        log: () => {},
+      });
+
+    const launcher = new Launcher(deps);
+    const bootPromise = launcher.boot();
+
+    // Let every pending microtask up to (and including) tunnel.start() flush,
+    // WITHOUT letting the still-pending registration settle.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(trace.order).toContain('registration.started');
+    expect(trace.order).not.toContain('pairing.start');
+    expect(trace.order).not.toContain('ui.ready');
+
+    resolveRegistration();
+    await bootPromise;
+
+    expect(trace.order.indexOf('registration.settled')).toBeLessThan(
+      trace.order.indexOf('pairing.start')
+    );
+    expect(trace.order).toContain('ui.ready');
+  });
+
+  it('proceeds to show the QR (fail-open) when registration does not confirm within the timeout', async () => {
+    const trace: Trace = { order: [] };
+    const { deps } = makeDeps(trace);
+    const apiLogLines: string[] = [];
+    deps.apiLog = (line) => apiLogLines.push(line);
+
+    let onUrlCb: ((url: string) => void) | undefined;
+    const fakeCloudflared = {
+      started: false,
+      async start() {
+        this.started = true;
+        onUrlCb?.('https://fake-tunnel.trycloudflare.com');
+      },
+      async waitForFirstUrl() {
+        return 'https://fake-tunnel.trycloudflare.com';
+      },
+      async stop() {
+        this.started = false;
+      },
+      getPublicUrl() {
+        return 'https://fake-tunnel.trycloudflare.com';
+      },
+      isRunning() {
+        return this.started;
+      },
+    };
+
+    deps.makeTunnelRouter = (apiBaseUrl: string) =>
+      new TunnelRouter({
+        apiBaseUrl,
+        // Never settles — simulates an unreachable relay.
+        onTunnelUrl: () => new Promise<void>(() => {}),
+        // Keep the fail-open ceiling tiny so this test doesn't wait out the real
+        // 45s production default.
+        firstRegistrationTimeoutMs: 20,
+        makeCloudflaredTunnel: (opts) => {
+          onUrlCb = opts.onUrl;
+          return fakeCloudflared as never;
+        },
+        log: () => {},
+      });
+
+    const launcher = new Launcher(deps);
+    const result = await launcher.boot();
+
+    expect(result.payload).toBeTruthy();
+    expect(apiLogLines.some((l) => l.includes('did not confirm within the timeout'))).toBe(true);
   });
 
   it('readies into the pairing QR by default — a PC that has never connected', async () => {

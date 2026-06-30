@@ -132,5 +132,6 @@ export {
   DEFAULT_VGIT_PORT,
   LOCAL_BIND_HOST,
   DEFAULT_RELAY_BASE_URL,
+  DEV_RELAY_BASE_URL,
 } from './config.js';
 export type { ApiChildEnvOverrides } from './config.js';

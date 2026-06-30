@@ -22,11 +22,18 @@ export const LOCAL_BIND_HOST = '127.0.0.1';
 
 /**
  * Default hosted relay (online gateway) the PC registers its tunnel URL with.
- * Override via `PORTABLE_RELAY_URL` to point at a self-hosted relay.
- * Defaults to the staging relay so `portable start` works without setting the
+ * Override via `PORTABLE_RELAY_URL` to point at a self-hosted relay (or staging).
+ * Defaults to the production relay so `portable start` works without setting the
  * env explicitly.
  */
-export const DEFAULT_RELAY_BASE_URL = 'https://app.portable-dev.com';
+export const DEFAULT_RELAY_BASE_URL = 'https://app.portable.dev';
+
+/**
+ * The staging relay. `portable start --dev` (cli.ts) points the launcher here
+ * instead of the production default — for hitting the staging gateway without
+ * having to export `PORTABLE_RELAY_URL` by hand.
+ */
+export const DEV_RELAY_BASE_URL = 'https://app.portable-dev.com';
 
 /**
  * Resolve the hosted-relay base URL the registration agent talks to

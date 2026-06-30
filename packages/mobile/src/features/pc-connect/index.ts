@@ -9,6 +9,7 @@
  */
 
 export { PcConnectGate, type PcConnectGateProps } from './PcConnectGate';
+export { PcConnectErrorScreen, type PcConnectErrorScreenProps } from './PcConnectErrorScreen';
 export { PcConnectLanding, type PcConnectLandingProps } from './PcConnectLanding';
 export { QRScannerGate, type QRScannerGateProps } from './QRScannerGate';
 export { parseQrPayload } from './parseQrPayload';

@@ -192,3 +192,91 @@ describe('TunnelRouter.stop', () => {
     expect(lines.some((l) => l.includes('no registration agent wired'))).toBe(true);
   });
 });
+
+describe('TunnelRouter.waitForFirstRegistration', () => {
+  it('resolves true once the registration handoff settles', async () => {
+    const onUrlRef: { fn?: (url: string) => void } = {};
+    const fake = makeFakeCloudflared({ firstUrl: 'https://r1.trycloudflare.com', onUrlRef });
+    let resolveHandoff!: () => void;
+    const handoff = new Promise<void>((resolve) => {
+      resolveHandoff = resolve;
+    });
+    const router = new TunnelRouter({
+      apiBaseUrl: 'http://127.0.0.1:4200',
+      onTunnelUrl: () => handoff,
+      makeCloudflaredTunnel: (o) => {
+        onUrlRef.fn = o.onUrl;
+        return fake as unknown as CloudflaredTunnel;
+      },
+      firstUrlTimeoutMs: 1000,
+      log: () => {},
+    });
+    await router.start();
+
+    const waitPromise = router.waitForFirstRegistration(1000);
+    resolveHandoff();
+    expect(await waitPromise).toBe(true);
+  });
+
+  it('resolves true immediately when no registration agent is wired', async () => {
+    const onUrlRef: { fn?: (url: string) => void } = {};
+    const fake = makeFakeCloudflared({ firstUrl: 'https://r1.trycloudflare.com', onUrlRef });
+    const router = new TunnelRouter({
+      apiBaseUrl: 'http://127.0.0.1:4200',
+      makeCloudflaredTunnel: (o) => {
+        onUrlRef.fn = o.onUrl;
+        return fake as unknown as CloudflaredTunnel;
+      },
+      firstUrlTimeoutMs: 1000,
+      log: () => {},
+    });
+    await router.start();
+    expect(await router.waitForFirstRegistration(1000)).toBe(true);
+  });
+
+  it('fails open: returns false once timeoutMs elapses without the handoff settling', async () => {
+    const onUrlRef: { fn?: (url: string) => void } = {};
+    const fake = makeFakeCloudflared({ firstUrl: 'https://r1.trycloudflare.com', onUrlRef });
+    const router = new TunnelRouter({
+      apiBaseUrl: 'http://127.0.0.1:4200',
+      onTunnelUrl: () => new Promise<void>(() => {}), // never settles
+      makeCloudflaredTunnel: (o) => {
+        onUrlRef.fn = o.onUrl;
+        return fake as unknown as CloudflaredTunnel;
+      },
+      firstUrlTimeoutMs: 1000,
+      log: () => {},
+    });
+    await router.start();
+    expect(await router.waitForFirstRegistration(10)).toBe(false);
+  });
+
+  it('honors the constructor firstRegistrationTimeoutMs default', async () => {
+    const onUrlRef: { fn?: (url: string) => void } = {};
+    const fake = makeFakeCloudflared({ firstUrl: 'https://r1.trycloudflare.com', onUrlRef });
+    const router = new TunnelRouter({
+      apiBaseUrl: 'http://127.0.0.1:4200',
+      onTunnelUrl: () => new Promise<void>(() => {}), // never settles
+      firstRegistrationTimeoutMs: 10,
+      makeCloudflaredTunnel: (o) => {
+        onUrlRef.fn = o.onUrl;
+        return fake as unknown as CloudflaredTunnel;
+      },
+      firstUrlTimeoutMs: 1000,
+      log: () => {},
+    });
+    await router.start();
+    expect(await router.waitForFirstRegistration()).toBe(false);
+  });
+
+  it('fails open on timeout when start() was never called — no handoff ever fires', async () => {
+    const router = new TunnelRouter({
+      apiBaseUrl: 'http://127.0.0.1:4200',
+      makeCloudflaredTunnel: () => {
+        throw new Error('should not be constructed — start() is never called');
+      },
+      log: () => {},
+    });
+    expect(await router.waitForFirstRegistration(10)).toBe(false);
+  });
+});

@@ -10,10 +10,13 @@
  * prompt without an explicit action. A scanned, validated {@link QrLinkPayload}
  * (`{ gatewayBase, pcId, token }`) → `onLink` saves the QR's data-path JWT keyed by
  * `pcId` (no gateway round-trip) → `onConnected(pcId)` lets the host point the app at
- * `<gatewayBase>/t/<pcId>`; cancelling the camera returns to the landing.
+ * `<gatewayBase>/t/<pcId>`; cancelling the camera returns to the landing. A save
+ * failure calls `onLinkFailed` instead of silently sitting on the (by now
+ * paused/"detected") camera — see {@link PcConnectGateHost}, which owns the single
+ * error surface for both this and a downstream `onConnected` failure.
  *
- * `onLink` / `onConnected` are injectable seams so the flow renders deterministically
- * under RNTL with no native modules.
+ * `onLink` / `onConnected` / `onLinkFailed` are injectable seams so the flow renders
+ * deterministically under RNTL with no native modules.
  */
 
 import { useState } from 'react';
@@ -35,9 +38,11 @@ export interface PcConnectGateProps {
    * omitted the host owns the connect after `onLink` resolves.
    */
   onConnected?: (pcId: string) => void;
+  /** `onLink` rejected (e.g. the secure-store write failed). Optional. */
+  onLinkFailed?: () => void;
 }
 
-export function PcConnectGate({ onLink, onConnected }: PcConnectGateProps) {
+export function PcConnectGate({ onLink, onConnected, onLinkFailed }: PcConnectGateProps) {
   // Landing-first: the camera opens only after the user taps "Scan QR code".
   const [scanning, setScanning] = useState(false);
 
@@ -50,18 +55,10 @@ export function PcConnectGate({ onLink, onConnected }: PcConnectGateProps) {
       onCancel={() => setScanning(false) /* back to the landing */}
       onPayload={(payload) => {
         // Save the QR's JWT (parent-owned, save-only); on success the device now
-        // holds the credential for this pcId, so connect straight. A failed save
-        // keeps the user on the scanner to retry.
-        console.warn('[QRDBG] onPayload → linking pcId=', payload.pcId);
+        // holds the credential for this pcId, so connect straight.
         void onLink(payload)
-          .then(() => {
-            console.warn('[QRDBG] onLink OK → onConnected(', payload.pcId, ')');
-            return onConnected?.(payload.pcId);
-          })
-          .then(() => console.warn('[QRDBG] onConnected resolved'))
-          .catch((e) => {
-            console.warn('[QRDBG] onLink/onConnected THREW:', String(e?.message ?? e));
-          });
+          .then(() => onConnected?.(payload.pcId))
+          .catch(() => onLinkFailed?.());
       }}
     />
   );

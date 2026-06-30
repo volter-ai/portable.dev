@@ -32,18 +32,31 @@ jest.mock('expo-secure-store', () => {
   };
 });
 
+let mockOnScan: ((raw: string) => void) | undefined;
 jest.mock('../src/features/pc-connect/QrCameraScanner', () => {
   const { View } = require('react-native');
-  return { __esModule: true, default: () => <View testID="qr-camera-stub" /> };
+  return {
+    __esModule: true,
+    default: ({ onScan }: { onScan: (raw: string) => void }) => {
+      mockOnScan = onScan;
+      return <View testID="qr-camera-stub" />;
+    },
+  };
 });
 
-import { act, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Text } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import type { PcConnectConfig } from '../src/features/pc-connect';
 import { usePcConnectionStore } from '../src/features/pc-connect/pcConnectionStore';
 import { PcConnectGateHost } from '../src/features/shell/PcConnectGateHost';
+
+const VALID_QR = JSON.stringify({
+  gatewayBase: 'https://app.portable.dev',
+  pcId: 'pc_charlie',
+  token: 'pc-minted-jwt',
+});
 
 const SAFE_AREA_METRICS = {
   frame: { x: 0, y: 0, width: 390, height: 844 },
@@ -70,6 +83,7 @@ function renderHost(config: PcConnectConfig) {
 
 afterEach(() => {
   act(() => usePcConnectionStore.getState().reset());
+  mockOnScan = undefined;
 });
 
 describe('PcConnectGateHost — disconnect', () => {
@@ -204,5 +218,59 @@ describe('PcConnectGateHost — Apple reviewer fast path (D40)', () => {
 
     await waitFor(() => expect(screen.getByTestId('app-marker')).toBeTruthy());
     expect(getReviewerCredentials).not.toHaveBeenCalled();
+  });
+});
+
+describe('PcConnectGateHost — a scan that decodes but fails to link/connect', () => {
+  async function openCamera() {
+    await waitFor(() => expect(screen.getByTestId('pc-connect-landing')).toBeTruthy());
+    fireEvent.press(screen.getByTestId('pc-connect-landing-scan'));
+    await waitFor(() => expect(mockOnScan).toBeDefined());
+  }
+
+  it('onConnect resolves false → shows the error screen (not a stuck scanner)', async () => {
+    const onConnect = jest.fn(async () => false);
+    renderHost({ getConnectedPcId: async () => null, onConnect, onLink: async () => {} });
+
+    await openCamera();
+    act(() => mockOnScan!(VALID_QR));
+
+    await waitFor(() => expect(screen.getByTestId('pc-connect-error')).toBeTruthy());
+    expect(onConnect).toHaveBeenCalledWith('pc_charlie');
+    expect(screen.queryByTestId('qr-camera-stub')).toBeNull();
+  });
+
+  it('onLink rejects → shows the error screen', async () => {
+    const onConnect = jest.fn(async () => true);
+    renderHost({
+      getConnectedPcId: async () => null,
+      onConnect,
+      onLink: async () => {
+        throw new Error('secure-store write failed');
+      },
+    });
+
+    await openCamera();
+    act(() => mockOnScan!(VALID_QR));
+
+    await waitFor(() => expect(screen.getByTestId('pc-connect-error')).toBeTruthy());
+    expect(onConnect).not.toHaveBeenCalled();
+  });
+
+  it('"Try again" on the error screen returns to the connect landing for a fresh scan', async () => {
+    renderHost({
+      getConnectedPcId: async () => null,
+      onConnect: async () => false,
+      onLink: async () => {},
+    });
+
+    await openCamera();
+    act(() => mockOnScan!(VALID_QR));
+    await waitFor(() => expect(screen.getByTestId('pc-connect-error')).toBeTruthy());
+
+    fireEvent.press(screen.getByTestId('pc-connect-error-retry'));
+
+    await waitFor(() => expect(screen.getByTestId('pc-connect-landing')).toBeTruthy());
+    expect(screen.queryByTestId('pc-connect-error')).toBeNull();
   });
 });

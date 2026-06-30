@@ -5,6 +5,8 @@
  * Usage:
  *   portable start            start the local-first runtime (api + tunnel + pairing QR)
  *   portable start --debug    same, but ALSO stream the api logs to this terminal
+ *   portable start --dev      same, but register against the staging relay
+ *                             (app.portable-dev.com) instead of production
  *   portable help             show this help
  *
  * Run via `bun run portable` (root) or `bun --cwd packages/launcher start`.
@@ -22,7 +24,7 @@ import path from 'path';
 
 import { resolveDataDir } from '@vgit2/shared/secrets';
 
-import { loadOperatorEnv } from './config.js';
+import { DEV_RELAY_BASE_URL, loadOperatorEnv } from './config.js';
 import { createLauncher } from './Launcher.js';
 import { autoLinkIfEligible, runLinkCommand, runUnlinkCommand } from './ProjectCommands.js';
 import { acquireSingleton } from './SingletonGuard.js';
@@ -58,6 +60,9 @@ Flags:
                      to the log file too) so you can watch connections arrive.
                      The pairing QR is printed once instead of the live screen,
                      so the scrolling logs don't redraw over it.
+  --dev              Register against the STAGING relay (${DEV_RELAY_BASE_URL})
+                     instead of the production default. Ignored if
+                     PORTABLE_RELAY_URL is already set (env / .env always wins).
 
 Credentials (auto-discovered, else login):
   On start the launcher LOOKS for credentials already on your OS and uses them:
@@ -129,6 +134,7 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const wantsHelp = args.includes('help') || args.includes('--help') || args.includes('-h');
   const debug = args.includes('--debug') || args.includes('-d');
+  const wantsDev = args.includes('--dev');
   // The command is the first non-flag positional (default 'connect'), so
   // `portable --debug`, `portable connect --debug`, and bare `portable` all work.
   const command = args.find((a) => !a.startsWith('-')) ?? 'connect';
@@ -136,6 +142,14 @@ async function main(): Promise<void> {
   if (wantsHelp) {
     process.stdout.write(HELP);
     return;
+  }
+
+  // `--dev`: point the registration agent at the staging relay instead of the
+  // production default. An already-set PORTABLE_RELAY_URL (shell export or
+  // operator .env, both loaded by loadOperatorEnv above) always wins — this is
+  // just a shorthand default-switcher, not a hard override.
+  if (wantsDev && !process.env.PORTABLE_RELAY_URL) {
+    process.env.PORTABLE_RELAY_URL = DEV_RELAY_BASE_URL;
   }
 
   // Project-management subcommands: act on the cwd, print, and exit (no runtime).

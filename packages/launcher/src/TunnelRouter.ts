@@ -38,6 +38,12 @@ export interface TunnelRouterOptions {
   cloudflaredBin?: string;
   /** How long start() waits for the first URL before continuing (ms). Default 30000. */
   firstUrlTimeoutMs?: number;
+  /**
+   * Default for {@link TunnelRouter.waitForFirstRegistration}'s `timeoutMs` (ms).
+   * Default 45000 (a fail-open ceiling — comfortably above the registration
+   * agent's own ~30s verify budget). Lowered in tests to keep them fast.
+   */
+  firstRegistrationTimeoutMs?: number;
   /** Factory for the cloudflared supervisor (test seam). Defaults to the real impl. */
   makeCloudflaredTunnel?: (opts: CloudflaredTunnelOptions) => CloudflaredTunnel;
   /** Line sink for tunnel-router output. Defaults to console.log. */
@@ -52,12 +58,20 @@ export class TunnelRouter {
   private readonly detectImpl?: () => Promise<boolean>;
   private readonly cloudflaredBin?: string;
   private readonly firstUrlTimeoutMs: number;
+  private readonly firstRegistrationTimeoutMs: number;
   private readonly makeCloudflaredTunnel: (opts: CloudflaredTunnelOptions) => CloudflaredTunnel;
   private readonly log: (line: string) => void;
 
   private tunnel: CloudflaredTunnel | null = null;
   private publicUrl: string | null = null;
   private started = false;
+  /**
+   * Settles once the FIRST tunnel-URL → registration handoff resolves (the
+   * registration agent's verify + register, or "no agent wired"). See
+   * {@link waitForFirstRegistration}.
+   */
+  private readonly firstRegistrationPromise: Promise<void>;
+  private resolveFirstRegistration: () => void = () => {};
 
   constructor(options: TunnelRouterOptions) {
     this.apiBaseUrl = options.apiBaseUrl;
@@ -67,9 +81,13 @@ export class TunnelRouter {
     this.detectImpl = options.detectImpl;
     this.cloudflaredBin = options.cloudflaredBin;
     this.firstUrlTimeoutMs = options.firstUrlTimeoutMs ?? 30_000;
+    this.firstRegistrationTimeoutMs = options.firstRegistrationTimeoutMs ?? 45_000;
     this.makeCloudflaredTunnel =
       options.makeCloudflaredTunnel ?? ((opts) => new CloudflaredTunnel(opts));
     this.log = options.log ?? ((line) => console.log(line));
+    this.firstRegistrationPromise = new Promise((resolve) => {
+      this.resolveFirstRegistration = resolve;
+    });
   }
 
   /** The current public `*.trycloudflare.com` URL, or null before first capture. */
@@ -149,13 +167,49 @@ export class TunnelRouter {
   private handleUrl(url: string): void {
     this.publicUrl = url;
     if (this.onTunnelUrl) {
-      void Promise.resolve(this.onTunnelUrl(url)).catch((err) =>
-        this.log(
-          `[tunnel] registration handoff error: ${err instanceof Error ? err.message : String(err)}`
+      void Promise.resolve(this.onTunnelUrl(url))
+        .catch((err) =>
+          this.log(
+            `[tunnel] registration handoff error: ${err instanceof Error ? err.message : String(err)}`
+          )
         )
-      );
+        .finally(() => this.resolveFirstRegistration());
     } else {
       this.log(`[tunnel] no registration agent wired — would register ${url}`);
+      this.resolveFirstRegistration();
     }
+  }
+
+  /**
+   * Wait for the FIRST tunnel-URL → registration handoff to settle (the
+   * registration agent's DNS verify + `/tunnel/register` POST, or "no agent
+   * wired"). Lets the launcher avoid showing a scannable QR before the gateway
+   * can actually route to this PC — scanning early hits a PC the relay doesn't
+   * know about yet (the `*.trycloudflare.com` DNS-propagation window; see
+   * {@link TunnelRegistrationAgent}'s class doc).
+   *
+   * Bounded by `timeoutMs` (default {@link TunnelRouterOptions.firstRegistrationTimeoutMs},
+   * itself defaulting to 45s — comfortably above the registration agent's own
+   * ~30s verify budget) and **fail-open**, like {@link verifyPublicUrl}: a stuck
+   * registration (e.g. an unreachable relay) must not hang boot forever, since
+   * {@link TunnelHealthMonitor} can still recover it once the QR is up. Returns
+   * `true` if the handoff settled before the timeout, `false` if the wait gave
+   * up first.
+   */
+  async waitForFirstRegistration(
+    timeoutMs: number = this.firstRegistrationTimeoutMs
+  ): Promise<boolean> {
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        resolve();
+      }, timeoutMs);
+      if (typeof timer.unref === 'function') timer.unref();
+    });
+    await Promise.race([this.firstRegistrationPromise, timeout]);
+    if (timer) clearTimeout(timer);
+    return !timedOut;
   }
 }

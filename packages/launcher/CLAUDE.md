@@ -28,8 +28,15 @@ api child, no real cloudflared, no real Ink/http).
 - **`Launcher`** — orchestrator. `boot()` = `prepareCredentials()` (FIRST, before the
   api spawns + before Ink, so prompts own the plain terminal and the api child sees
   the creds) → `apiProcess.start()` → `waitForHealth` → mint JWT → `tunnel.start()` →
-  serve loopback pairing page → render terminal QR. `runUntilSignal()` adds
-  SIGINT/SIGTERM + api-death handling, then `shutdown()` (Ink unmount → pairing server
+  `tunnel.waitForFirstRegistration()` → serve loopback pairing page → render terminal
+  QR. The `waitForFirstRegistration` step matters: `tunnel.start()` only waits for
+  cloudflared to PRINT a `*.trycloudflare.com` URL, not for the gateway to know about
+  it — without the extra wait the QR/loopback page would go live while the
+  registration agent's DNS-verify + `/tunnel/register` POST was still running in the
+  background, so an early scan would hit a PC the relay couldn't route to yet. The
+  wait is bounded + fail-open (default 45s, see `TunnelRouter.waitForFirstRegistration`)
+  so a stuck relay still lets boot proceed instead of hanging forever. `runUntilSignal()`
+  adds SIGINT/SIGTERM + api-death handling, then `shutdown()` (Ink unmount → pairing server
   → tunnel → api). `createLauncher()` (async) wires the real impls: ensures the local
   `JWT_SECRET`, resolves the pcId + relay, awaits `ensureCloudflared`, runs
   `ensureChromium` (the required Playwright browser; hard-fails before anything spawns),
@@ -164,7 +171,12 @@ overrides)` (pins `API_BIND_HOST=127.0.0.1` + `VGIT_PORT`, drops `DEV_BACKEND_PO
     missing-cloudflared error propagates out so the launcher surfaces the install hint; a
     slow first URL is logged, not fatal. `stop()` tears down cloudflared then calls the
     `onStop` seam (the agent's heartbeat teardown). Inject `makeCloudflaredTunnel` to fake
-    cloudflared in tests.
+    cloudflared in tests. **`waitForFirstRegistration(timeoutMs?)`** — resolves once the
+    FIRST `onTunnelUrl` handoff settles (the registration agent's verify + register, or
+    immediately if no `onTunnelUrl` is wired); `Launcher.boot()` awaits it before showing
+    the QR/loopback page (the premature-QR fix). Bounded + fail-open (default
+    `firstRegistrationTimeoutMs`, 45s) — returns `false` instead of hanging if the handoff
+    never settles, since `TunnelHealthMonitor` recovers a dead registration later anyway.
 
 - **`PublicUrlVerifier.ts`** (`waitForPublicDns` / `verifyPublicUrl`) — public-URL
   readiness via pure `node:dns` + `fetch` (no `dig`/`curl` subprocesses). `waitForPublicDns`

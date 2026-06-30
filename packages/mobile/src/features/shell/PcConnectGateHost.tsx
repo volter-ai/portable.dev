@@ -16,7 +16,12 @@
  *   - Still no PC → mount {@link PcConnectGate}: pairing is QR-ONLY (the `/my-pcs`
  *     picker is dropped), so it goes straight to the scanner. A scanned QR is
  *     saved (its JWT keyed by `pcId`) then connected; a successful connect flips
- *     the host to `connected` and renders `children`.
+ *     the host to `connected` and renders `children`. A scan that decodes but whose
+ *     link/connect step fails switches AWAY from the scanner (`connecting` → `error`,
+ *     mirroring {@link PcConnectModal}'s phases) instead of leaving it mounted — the
+ *     camera shows a frozen "Code detected!" success state the instant a code decodes
+ *     (see `QrCameraScanner`), so a failed link/connect must not strand the user
+ *     staring at that false success with no way back in.
  *
  * Every collaborator is an injected seam ({@link PcConnectConfig}) so the gate
  * runs deterministically under RNTL with no native modules / Clerk. The device
@@ -27,13 +32,17 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { LoadingSplash } from '../../components/LoadingSplash';
 import {
+  PcConnectErrorScreen,
   PcConnectGate,
   getConnectedPcId as defaultGetConnectedPcId,
   usePcConnectionStore,
   type PcConnectConfig,
 } from '../pc-connect';
 
-type Phase = 'checking' | 'connect' | 'connected';
+type Phase = 'checking' | 'connect' | 'connecting' | 'error' | 'connected';
+
+const CONNECT_FAILED_MESSAGE =
+  "Couldn't connect to your PC. Make sure `portable start` is running on your computer, then scan the QR again.";
 
 export interface PcConnectGateHostProps {
   config: PcConnectConfig;
@@ -112,23 +121,34 @@ export function PcConnectGateHost({ config, children }: PcConnectGateHostProps) 
     return <>{children}</>;
   }
 
+  if (phase === 'connecting') {
+    return <LoadingSplash testID="pc-connect-connecting" message="Connecting to your PC…" />;
+  }
+
+  if (phase === 'error') {
+    return (
+      <PcConnectErrorScreen message={CONNECT_FAILED_MESSAGE} onRetry={() => setPhase('connect')} />
+    );
+  }
+
   return (
     <PcConnectGate
       onLink={config.onLink}
+      onLinkFailed={() => setPhase('error')}
       onConnected={(pcId) => {
-        // The QR's JWT is now saved for this pcId (onLink). connectToPc (via the
-        // config seam) persists the connected pcId on a validated relay endpoint;
-        // only then do we render the app. An unhealthy/unlinked PC resolves
-        // `false` → stay on the scanner so the user can re-scan (a rotation
-        // re-points automatically).
+        // The QR's JWT is now saved for this pcId (onLink). Switch away from the
+        // scanner immediately — it's already showing a paused "Code detected!"
+        // success state, so this must resolve to a real outcome, not silently
+        // leave that frozen screen up. connectToPc (via the config seam) persists
+        // the connected pcId on a validated relay endpoint; an unhealthy/unlinked
+        // PC resolves `false` → the error screen's "Try again" returns to the
+        // landing for a fresh scan (a tunnel rotation re-points automatically on
+        // the next attempt).
+        setPhase('connecting');
         void config
           .onConnect(pcId)
-          .then((ready) => {
-            if (ready) setPhase('connected');
-          })
-          .catch(() => {
-            /* Stay on the scanner; the user can retry. */
-          });
+          .then((ready) => setPhase(ready ? 'connected' : 'error'))
+          .catch(() => setPhase('error'));
       }}
     />
   );

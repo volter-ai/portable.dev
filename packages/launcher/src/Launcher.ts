@@ -57,7 +57,9 @@ import { TunnelRouter } from './TunnelRouter.js';
  *      the SAME `JWT_SECRET` + pcId + relay so it validates the minted JWT.
  *   4. Wait for /api/health.
  *   5. Mint the data-path JWT in the launcher.
- *   6. Bring up cloudflared + the pcId-keyed registration agent.
+ *   6. Bring up cloudflared + the pcId-keyed registration agent, and WAIT for the
+ *      agent's first registration handoff to settle (bounded/fail-open) — so the
+ *      QR is never shown before the gateway can actually route to this PC.
  *   7. Render the QR `{ gatewayBase, pcId, token }` in the terminal (Ink).
  *   8. Serve a loopback-only pairing fallback page on the launcher's OWN port
  *      (NEVER tunneled — the token would leak through the relay).
@@ -337,6 +339,21 @@ export class Launcher {
     const reviewerToken = resolveReviewerPublish(env) ? token : undefined;
     this.tunnel = this.deps.makeTunnelRouter(apiBaseUrl, reviewerToken);
     await this.tunnel.start();
+
+    // 5b. Wait for the tunnel's FIRST registration handoff (DNS verify + the
+    //     `/tunnel/register` POST) to settle before showing anything scannable.
+    //     `tunnel.start()` only waits for cloudflared to PRINT a URL — not for the
+    //     gateway to actually know about it — so without this gate a user who
+    //     scans the instant the QR appears can hit a PC the relay can't route to
+    //     yet. Bounded/fail-open (see TunnelRouter.waitForFirstRegistration): a
+    //     stuck relay still lets boot proceed instead of hanging forever.
+    setStatus('Registering this PC with the relay…');
+    const registered = await this.tunnel.waitForFirstRegistration();
+    if (!registered) {
+      detailLog(
+        '[launcher] tunnel registration did not confirm within the timeout — showing the QR anyway (self-heal will recover it)'
+      );
+    }
 
     // 6. Serve the loopback-only pairing fallback page (NEVER tunneled).
     setStatus('Starting the pairing page…');
