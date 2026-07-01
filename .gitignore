@@ -25,6 +25,9 @@ packages/*/src/**/*.d.ts.map
 !packages/*/src/**/env.d.ts
 # Hand-written ambient module shim (source, not a build artifact) — US-E2-002a
 !packages/api/src/types/bun-sqlite.d.ts
+# Hand-written express-session augmentation (adds session.githubUser); source, not
+# a build artifact. Must ship — the api won't typecheck without it (public CI too).
+!packages/api/src/types.d.ts
 
 # Gateway built onboarding app
 packages/gateway/public/onboarding

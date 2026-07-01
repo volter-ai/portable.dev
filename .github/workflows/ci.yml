@@ -35,9 +35,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # NOTE: gitleaks/gitleaks-action@v2 requires a PAID GITLEAKS_LICENSE for
+      # organization-owned repos (volter-ai). The gitleaks CLI itself is free, so
+      # run it directly with the shipped .gitleaks.toml — the SAME invocation the
+      # private export gate uses, so public CI and the export scan agree.
+      - name: Install gitleaks
+        run: |
+          VERSION=8.30.1
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+      - name: Scan for secrets
+        run: gitleaks detect --no-git --source . --redact --config .gitleaks.toml
