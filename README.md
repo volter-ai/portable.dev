@@ -73,10 +73,6 @@ portable                 # or, from a source checkout: bun run portable
 - [App Store](https://apps.apple.com/us/app/portable-dev/id6758861546)
 - [Google Play](https://play.google.com/store/apps/details?id=dev.portable.app)
 
-> Heads up: the `@volter-ai/portable.dev` package isn't published yet, so for now the
-> **`source`** flavor is the supported path — see [Install the `portable` CLI](#install-the-portable-cli)
-> for the hardened install scripts. The `bun` / `npm` / `curl` one-liners light up once it ships.
-
 ---
 
 ## Table of contents
