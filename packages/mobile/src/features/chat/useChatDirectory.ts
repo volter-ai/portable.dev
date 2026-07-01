@@ -29,6 +29,7 @@ import type { ChatCategory, ChatListItem, GetChatsResponse } from '@vgit2/shared
 import { useApi } from '../api/ApiProvider';
 import { useArchiveChat, useDeleteChat, useSaveChat, useSetChatPin } from '../api/hooks';
 import { queryKeys } from '../api/keys';
+import { useChatSeenStore } from './chatSeenStore';
 
 /** Page size for the directory list (matches the web `useChatManagement` default). */
 export const CHAT_PAGE_SIZE = 50;
@@ -72,6 +73,7 @@ export function useChatDirectory(options: UseChatDirectoryOptions = {}): UseChat
   const saveMutation = useSaveChat();
   const pinMutation = useSetChatPin();
   const deleteMutation = useDeleteChat();
+  const forgetSeen = useChatSeenStore((s) => s.forget);
 
   const queryKey = queryKeys.chatDirectory(category);
 
@@ -184,9 +186,10 @@ export function useChatDirectory(options: UseChatDirectoryOptions = {}): UseChat
   const remove = useCallback(
     (chatId: string) => {
       dropFromCache(chatId);
+      forgetSeen(chatId);
       deleteMutation.mutate({ chatId });
     },
-    [dropFromCache, deleteMutation]
+    [dropFromCache, forgetSeen, deleteMutation]
   );
 
   const openChat = useCallback(

@@ -135,6 +135,7 @@ export function getToolOperationType(toolName: string): keyof typeof TOOL_COLORS
   if (toolName === 'Read') return 'read';
   if (toolName === 'Write') return 'write';
   if (toolName === 'Edit') return 'edit';
+  if (toolName === 'MultiEdit') return 'edit';
   if (toolName === 'Grep') return 'read';
   if (toolName === 'Glob') return 'read';
   if (toolName === 'WebSearch') return 'read';

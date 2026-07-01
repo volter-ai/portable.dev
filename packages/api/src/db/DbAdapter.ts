@@ -273,6 +273,17 @@ export interface DbAdapter {
   updateModel(chatId: string, userId: string, model: string, authToken?: string): Promise<boolean>;
 
   /**
+   * Update the reasoning effort level for a chat
+   * @param authToken - Optional JWT auth token (unused by the local SQLite adapter)
+   */
+  updateEffort(
+    chatId: string,
+    userId: string,
+    effort: string,
+    authToken?: string
+  ): Promise<boolean>;
+
+  /**
    * Update the agent setup ID for a chat
    * @param authToken - Optional JWT auth token (unused by the local SQLite adapter)
    */

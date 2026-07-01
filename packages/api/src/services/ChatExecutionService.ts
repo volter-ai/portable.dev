@@ -47,6 +47,7 @@ export interface ExecuteMessageOptions {
   pageContext?: PageContext;
   model?: string;
   permissions?: string;
+  effort?: string;
   aiStyle?: AIStyleMode;
   customAiStylePrompt?: string;
   agentSetupId?: string;
@@ -309,6 +310,7 @@ export class ChatExecutionService {
       model?: string;
       permissions?: string;
       agentSetupId?: string;
+      effort?: string;
       aiStyle?: string;
       customAiStylePrompt?: string;
     }
@@ -325,8 +327,9 @@ export class ChatExecutionService {
     effectiveModel?: string;
     effectivePermissions?: string;
     effectiveAgentSetupId?: string;
+    effectiveEffort?: string;
   }> {
-    const { content, pageContext, model, permissions, agentSetupId, files } = data;
+    const { content, pageContext, model, permissions, agentSetupId, effort, files } = data;
     const { userId, authToken } = context;
 
     try {
@@ -354,6 +357,8 @@ export class ChatExecutionService {
       const effectiveModel = model || chat?.model || DEFAULT_MODEL_MODE;
       const effectivePermissions = permissions || chat?.permissions || 'ask_each_time';
       const effectiveAgentSetupId = agentSetupId || chat?.agent_setup_id || 'freestyle';
+      // No forced default — an unset effort lets the SDK apply its own default.
+      const effectiveEffort = effort || chat?.effort || undefined;
 
       const effectiveContent = content;
 
@@ -382,6 +387,7 @@ export class ChatExecutionService {
         effectiveModel,
         effectivePermissions,
         effectiveAgentSetupId,
+        effectiveEffort,
       };
     } catch (error: any) {
       console.error(`[ChatExecutionService] Error preparing message for ${data.chatId}:`, error);
@@ -674,7 +680,7 @@ export class ChatExecutionService {
    */
   async handleUpdateSettings(
     context: ExecutionContext,
-    data: { chatId: string; settings: { model?: string; permissions?: string } }
+    data: { chatId: string; settings: { model?: string; permissions?: string; effort?: string } }
   ): Promise<{ success: boolean; error?: string }> {
     const { chatId, settings } = data;
     const { userId, authToken, emitter } = context;
@@ -688,7 +694,10 @@ export class ChatExecutionService {
       // Broadcast to all sockets in the room
       emitter.emit('chat:settings_updated', { chatId, settings });
 
-      // If permissions changed and there's an active session, interrupt it
+      // If permissions changed and there's an active session, interrupt it. Effort
+      // is NOT interrupted the same way — it only affects reasoning depth (not tool
+      // approval), so it's safe to let it apply lazily on the next message (the
+      // model/permissions/effort "session params changed" check in executeMessage).
       if (settings.permissions && this.claudeService) {
         const session = this.claudeService.getSession(chatId);
         if (session && session.query) {
@@ -950,23 +959,56 @@ export class ChatExecutionService {
       // Get existing session if it exists
       let existingSession = this.claudeService.getSession(chatId);
 
-      // Check if session parameters changed (permissions or model)
+      // Check if session parameters changed (permissions, model, or effort)
       if (isRunning && existingSession) {
         const permissionsChanged = existingSession.permissions !== options.permissions;
         const modelChanged = existingSession.model !== options.model;
+        const effortChanged = existingSession.effort !== options.effort;
 
-        if (permissionsChanged || modelChanged) {
+        // A permission change always tears down and recreates the session — the
+        // SDK's setPermissionMode() live control request is intentionally NOT
+        // adopted here (out of scope; see issue #6). An effort change also
+        // recreates: the SDK has no live effort control request.
+        if (permissionsChanged || effortChanged) {
           console.log(
-            `[ChatExecutionService] Session parameters changed for ${chatId}, recreating session`
+            `[ChatExecutionService] Permissions/effort changed for ${chatId}, recreating session`
           );
 
-          // Stop existing session
           await this.claudeService.stopSession(chatId, userId);
-
-          // Clear session reference
           existingSession = undefined;
-        } else {
-          // Parameters unchanged - use normal message injection path (quick, no lock needed)
+        } else if (modelChanged) {
+          // Model-only change: try the SDK's live query.setModel() control
+          // request first so the running subprocess (and its conversation
+          // context) survives the switch. Fall back to the old restart when the
+          // live switch isn't available (older SDK) or the control request fails.
+          const switchedLive = await this.claudeService.switchSessionModel(chatId, options.model);
+
+          if (switchedLive) {
+            console.log(
+              `[ChatExecutionService] Model switched live for ${chatId} (session kept alive)`
+            );
+          } else {
+            console.log(
+              `[ChatExecutionService] Live model switch unavailable for ${chatId}, recreating session`
+            );
+
+            // While the live-switch attempt was in flight, a concurrent
+            // teardown (idle reaper / another device's chat:kill-session /
+            // a racing permissions restart) may have already stopped this
+            // exact session — re-stopping an already-stopped session deletes
+            // it outright (session_id included) instead of leaving it
+            // resumable, discarding the conversation. Only stop if it's
+            // still actually running.
+            if (this.claudeService.isSessionRunning(chatId)) {
+              await this.claudeService.stopSession(chatId, userId);
+            }
+            existingSession = undefined;
+          }
+        }
+
+        if (existingSession) {
+          // Parameters unchanged, OR the model was just switched live -
+          // use normal message injection path (quick, no lock needed)
           console.log(
             `[ChatExecutionService] Session ${chatId} is already running, adding message to queue`
           );
@@ -1178,6 +1220,7 @@ export class ChatExecutionService {
       playwrightDevice: message.context?.playwrightDevice || 'mobile',
       model: options.model,
       permissions: chatPermissions,
+      effort: options.effort,
       authToken,
       agentSetupId: chatAgentSetupId,
       emitter: context.emitter, // Pass emitter for portable_execute SDK
@@ -1410,6 +1453,7 @@ export class ChatExecutionService {
         playwrightDevice: message.context?.playwrightDevice || 'mobile',
         model: options.model,
         permissions: options.permissions,
+        effort: options.effort,
         authToken,
         agentSetupId: options.agentSetupId,
         forkFromSessionId, // Fork-on-first-write (undefined for normal new chats)

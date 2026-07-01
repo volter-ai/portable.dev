@@ -325,6 +325,14 @@ export class ClaudeService {
   }
 
   /**
+   * Live-switch the model on a running session without restarting it.
+   * Delegates to SessionHandler
+   */
+  async switchSessionModel(chatId: string, model?: string): Promise<boolean> {
+    return this.sessionHandler.switchSessionModel(chatId, model);
+  }
+
+  /**
    * Check bash output for background process
    * Delegates to ProcessHandler
    */

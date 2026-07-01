@@ -401,6 +401,24 @@ describe('SqliteDbAdapter - automatic JSON → SQLite migration on initialize', 
     expect(messages[1].data).toEqual({ text: 'hi' });
   });
 
+  it('imports a legacy chat carrying an effort level, and tolerates one with none', async () => {
+    await seedLegacyJson(
+      dataDir,
+      {
+        'chat-effort': legacyChatRow('chat-effort', USER, { effort: 'xhigh' }),
+        'chat-no-effort': legacyChatRow('chat-no-effort', USER),
+      },
+      {}
+    );
+
+    const adapter = await newAdapter();
+
+    const withEffort = await adapter.getChat('chat-effort', USER);
+    expect(withEffort!.effort).toBe('xhigh');
+    const withoutEffort = await adapter.getChat('chat-no-effort', USER);
+    expect(withoutEffort!.effort ?? null).toBeNull();
+  });
+
   it('writes a persistent migration marker into the chat data directory itself', async () => {
     await seedLegacyJson(dataDir, { c1: legacyChatRow('c1', USER) }, {});
     await newAdapter();

@@ -88,6 +88,7 @@ export interface ClaudeSession {
   userId?: string; // User ID for session cleanup
   model?: string; // Model selection (sonnet or haiku)
   permissions?: string; // Permission mode (default, plan, accept_edits, bypass_permissions)
+  effort?: string; // Reasoning effort level (low, medium, high, xhigh, max)
   isProcessing?: boolean; // NEW: True when actively processing a message, false when idle/waiting
   authToken?: string; // JWT auth token for database operations (RLS) - stored for error cleanup
   lastActivityAt?: number; // Track last activity for staleness detection

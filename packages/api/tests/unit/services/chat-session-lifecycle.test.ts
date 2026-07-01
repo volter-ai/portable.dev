@@ -250,6 +250,271 @@ describe('SessionHandler.getClaudeSessionInfos', () => {
   });
 });
 
+describe('SessionHandler.switchSessionModel', () => {
+  function makeHandler(sessions: Map<string, any>) {
+    return new SessionHandler({ chatService: {} } as any, sessions as any, new Map(), new Map());
+  }
+
+  it('calls the live query.setModel() and updates session.model, without stopping the session', async () => {
+    const setModel = mock(async (_model?: string) => {});
+    const sessions = new Map([
+      ['chat-1', liveIdleSession({ model: 'sonnet', query: { setModel } })],
+    ]);
+    const handler = makeHandler(sessions);
+
+    const switched = await handler.switchSessionModel('chat-1', 'haiku');
+
+    expect(switched).toBe(true);
+    expect(setModel).toHaveBeenCalledTimes(1);
+    expect(setModel).toHaveBeenCalledWith('haiku');
+    // Session stays live in the map — no stop/removal.
+    expect(sessions.get('chat-1')!.query).toBeDefined();
+    expect(sessions.get('chat-1')!.model).toBe('haiku');
+  });
+
+  it('returns false for a chat with no session', async () => {
+    const handler = makeHandler(new Map());
+
+    expect(await handler.switchSessionModel('missing-chat', 'haiku')).toBe(false);
+  });
+
+  it('returns false for a torn-down (non-live) session — only a session_id string remains', async () => {
+    const sessions = new Map([
+      ['chat-1', liveIdleSession({ model: 'sonnet', query: null, inputQueue: undefined })],
+    ]);
+    const handler = makeHandler(sessions);
+
+    expect(await handler.switchSessionModel('chat-1', 'haiku')).toBe(false);
+    expect(sessions.get('chat-1')!.model).toBe('sonnet'); // unchanged
+  });
+
+  it('returns false when the live query has no setModel control method (older SDK)', async () => {
+    const sessions = new Map([['chat-1', liveIdleSession({ model: 'sonnet', query: {} })]]);
+    const handler = makeHandler(sessions);
+
+    expect(await handler.switchSessionModel('chat-1', 'haiku')).toBe(false);
+    expect(sessions.get('chat-1')!.model).toBe('sonnet'); // unchanged
+  });
+
+  it('returns false and leaves session.model unchanged when the SDK call throws', async () => {
+    const setModel = mock(async (_model?: string) => {
+      throw new Error('control request failed');
+    });
+    const sessions = new Map([
+      ['chat-1', liveIdleSession({ model: 'sonnet', query: { setModel } })],
+    ]);
+    const handler = makeHandler(sessions);
+
+    expect(await handler.switchSessionModel('chat-1', 'haiku')).toBe(false);
+    expect(sessions.get('chat-1')!.model).toBe('sonnet'); // unchanged — caller falls back to restart
+  });
+
+  it('serializes overlapping calls for the same chat — the second returns false instead of racing a conflicting setModel()', async () => {
+    // Two devices switch the same chat's model within the same tick. The
+    // first setModel() call is held open; the second call must not fire its
+    // own conflicting setModel() while the first is still in flight.
+    let releaseFirst!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const setModel = mock(async (_model?: string) => {
+      await gate;
+    });
+    const sessions = new Map([
+      ['chat-1', liveIdleSession({ model: 'sonnet', query: { setModel } })],
+    ]);
+    const handler = makeHandler(sessions);
+
+    const first = handler.switchSessionModel('chat-1', 'haiku');
+    const second = await handler.switchSessionModel('chat-1', 'opus');
+
+    expect(second).toBe(false); // rejected immediately — no second setModel call
+    expect(setModel).toHaveBeenCalledTimes(1);
+    expect(setModel).toHaveBeenCalledWith('haiku');
+    expect(sessions.get('chat-1')!.model).toBe('sonnet'); // not yet switched — first still pending
+
+    releaseFirst();
+    expect(await first).toBe(true);
+    expect(sessions.get('chat-1')!.model).toBe('haiku');
+  });
+
+  it('returns false without stamping session.model when a concurrent stop replaces the session mid-switch', async () => {
+    // Simulate SessionReaperService / chat:kill-session tearing this exact
+    // session down (a brand-new session object takes its place in the map,
+    // as a fresh CREATE/RESUME would) WHILE the SDK round-trip is in flight.
+    const sessions = new Map<string, any>();
+    const setModel = mock(async (_model?: string) => {
+      sessions.set('chat-1', liveIdleSession({ model: 'sonnet', session_id: 'sid-replacement' }));
+    });
+    sessions.set('chat-1', liveIdleSession({ model: 'sonnet', query: { setModel } }));
+    const handler = makeHandler(sessions);
+
+    const switched = await handler.switchSessionModel('chat-1', 'haiku');
+
+    expect(switched).toBe(false);
+    // The replacement session's model is untouched by the stale switch.
+    expect(sessions.get('chat-1')!.model).toBe('sonnet');
+  });
+});
+
+describe('ChatExecutionService.executeMessage — live model switch (no restart)', () => {
+  function makeService(
+    overrides: {
+      session?: any;
+      isRunning?: boolean;
+      isSessionRunningImpl?: () => boolean;
+      canResume?: boolean;
+      switchSessionModel?: ReturnType<typeof mock>;
+    } = {}
+  ) {
+    const session = overrides.session ?? { model: 'sonnet', permissions: 'default' };
+    const switchSessionModel = overrides.switchSessionModel ?? mock(async () => true);
+    const stopSession = mock(async (_chatId: string, _userId?: string) => true);
+    const addMessageToSession = mock(
+      (_chatId: string, _content: string | any[], _userId: string) => true
+    );
+
+    const claudeService = {
+      restoreSessionFromDatabase: mock(async () => false),
+      isSessionRunning: mock(overrides.isSessionRunningImpl ?? (() => overrides.isRunning ?? true)),
+      canResumeSession: mock(() => overrides.canResume ?? false),
+      getSession: mock(() => session),
+      switchSessionModel,
+      stopSession,
+      addMessageToSession,
+    } as any;
+
+    const chatService = {
+      getChatOrigin: mock(async () => ({ origin: 'sqlite' })),
+      bufferMessage: mock(async () => {}),
+    } as any;
+
+    const messageDeduplicationService = {
+      isDuplicate: mock(() => false),
+      addHash: mock(() => {}),
+    } as any;
+
+    const service = new ChatExecutionService(
+      chatService,
+      claudeService,
+      {} as any, // gitLocalService
+      messageDeduplicationService,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined
+    );
+
+    return { service, session, switchSessionModel, stopSession, addMessageToSession };
+  }
+
+  function ctx() {
+    return {
+      chatId: 'chat-1',
+      userId: 'alice@example.com',
+      username: 'alice',
+      authToken: 't',
+      emitter: {
+        emit: mock(() => {}),
+        broadcastRuntimeStateToUser: mock(() => {}),
+      } as any,
+    } as any;
+  }
+
+  it('live-switches the model instead of restarting when only the model changed', async () => {
+    const { service, switchSessionModel, stopSession, addMessageToSession } = makeService({
+      session: { model: 'sonnet', permissions: 'default' },
+    });
+
+    await service.executeMessage(
+      ctx(),
+      { content: 'hi' },
+      { model: 'haiku', permissions: 'default' }
+    );
+
+    expect(switchSessionModel).toHaveBeenCalledWith('chat-1', 'haiku');
+    expect(stopSession).not.toHaveBeenCalled();
+    expect(addMessageToSession).toHaveBeenCalledWith('chat-1', 'hi', 'alice@example.com');
+  });
+
+  it('injects directly (no switch, no restart) when neither model nor permissions changed', async () => {
+    const { service, switchSessionModel, stopSession, addMessageToSession } = makeService({
+      session: { model: 'sonnet', permissions: 'default' },
+    });
+
+    await service.executeMessage(
+      ctx(),
+      { content: 'hi' },
+      { model: 'sonnet', permissions: 'default' }
+    );
+
+    expect(switchSessionModel).not.toHaveBeenCalled();
+    expect(stopSession).not.toHaveBeenCalled();
+    expect(addMessageToSession).toHaveBeenCalledWith('chat-1', 'hi', 'alice@example.com');
+  });
+
+  it('falls back to stopSession when the live model switch is unavailable', async () => {
+    const { service, switchSessionModel, stopSession } = makeService({
+      session: { model: 'sonnet', permissions: 'default' },
+      switchSessionModel: mock(async () => false),
+    });
+
+    // Downstream session recreation (startNewSession) isn't stubbed here — only
+    // the restart DECISION is asserted.
+    await service
+      .executeMessage(ctx(), { content: 'hi' }, { model: 'haiku', permissions: 'default' })
+      .catch(() => {});
+
+    expect(switchSessionModel).toHaveBeenCalledWith('chat-1', 'haiku');
+    expect(stopSession).toHaveBeenCalledWith('chat-1', 'alice@example.com');
+  });
+
+  it('does NOT re-stop when a concurrent teardown already stopped the session during a failed live switch', async () => {
+    // A concurrent idle-reap / chat:kill-session / racing restart may have
+    // already torn this exact session down while switchSessionModel() was
+    // awaiting the SDK. Re-stopping an already-stopped session would delete
+    // it outright (losing session_id) instead of leaving it resumable.
+    let callCount = 0;
+    const { service, switchSessionModel, stopSession } = makeService({
+      session: { model: 'sonnet', permissions: 'default' },
+      switchSessionModel: mock(async () => false),
+      // 1st call = the top-of-executeMessage isRunning check (session was
+      // running when the message arrived); 2nd call = the post-failed-switch
+      // recheck (a concurrent stop already tore it down in the meantime).
+      isSessionRunningImpl: () => {
+        callCount += 1;
+        return callCount === 1;
+      },
+    });
+
+    await service
+      .executeMessage(ctx(), { content: 'hi' }, { model: 'haiku', permissions: 'default' })
+      .catch(() => {});
+
+    expect(switchSessionModel).toHaveBeenCalledWith('chat-1', 'haiku');
+    expect(stopSession).not.toHaveBeenCalled();
+  });
+
+  it('still restarts (stopSession) when permissions change, regardless of the model', async () => {
+    const { service, switchSessionModel, stopSession } = makeService({
+      session: { model: 'sonnet', permissions: 'default' },
+    });
+
+    await service
+      .executeMessage(
+        ctx(),
+        { content: 'hi' },
+        { model: 'sonnet', permissions: 'bypass_permissions' }
+      )
+      .catch(() => {});
+
+    expect(stopSession).toHaveBeenCalledWith('chat-1', 'alice@example.com');
+    expect(switchSessionModel).not.toHaveBeenCalled();
+  });
+});
+
 describe('ChatExecutionService.handleKillSession', () => {
   let stopSession: ReturnType<typeof mock>;
   let getSession: ReturnType<typeof mock>;

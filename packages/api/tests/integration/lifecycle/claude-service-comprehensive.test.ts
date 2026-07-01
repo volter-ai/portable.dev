@@ -358,9 +358,49 @@ describe('Claude Service - Comprehensive Integration Tests', () => {
   });
 
   describe('Model Switching', () => {
-    it('should recreate session when model changes mid-conversation', async () => {
+    /**
+     * The mock SDK (tests/setup/mocks/mockClaudeAgentSDK.ts) yields its
+     * canned blocks and then completes the async generator — unlike the real
+     * SDK, which (per the "Persistent Query Architecture" ClaudeSession doc
+     * comment) keeps the query alive, blocking on the inputQueue between
+     * turns, until the reaper/user explicitly stops it. So after one message
+     * round-trips through the mock, `session.query` is already null exactly
+     * as it would be after a REAL session was reaped — it does not represent
+     * a chat that's still live between turns. To exercise the
+     * still-live-between-turns path these tests are about, revive the
+     * session's query the same way it would look right after a turn
+     * completes but BEFORE the idle reaper (or user) tears it down: `query`/
+     * `inputQueue` truthy, `setModel` recorded on the shared mock singleton
+     * so assertions can use the same `mockQueryImplementation` helpers as the
+     * rest of this file.
+     */
+    function reviveLiveSession(chatId: string) {
+      const session = claudeService.getSession(chatId)!;
+      session.query = {
+        setModel: async (model?: string) => mockQueryImplementation.recordSetModel(model),
+        // A forced stop (permissions change / live-switch failure) calls
+        // query.return() — mirror the real "unified cleanup" finally block
+        // that a genuine for-await loop would run on return(): null out
+        // query/inputQueue so the next startClaudeCodeSession call sees a
+        // properly torn-down session and resumes/creates fresh.
+        return: async () => {
+          session.query = null;
+          session.inputQueue = undefined;
+        },
+      };
+      session.inputQueue = {
+        enqueue: () => {},
+        close: () => {},
+      };
+      return session;
+    }
+
+    it('should switch model on the live session without restarting when only the model changes', async () => {
       /**
-       * SCENARIO: Developer switches from sonnet to haiku for faster responses
+       * SCENARIO: Developer switches from sonnet to haiku for faster responses,
+       * mid-conversation, via the model picker. The SDK's streaming-input
+       * Query.setModel() should be used instead of killing + recreating the
+       * session's subprocess.
        */
 
       const chatId = 'chat-claude-004';
@@ -409,12 +449,11 @@ describe('Claude Service - Comprehensive Integration Tests', () => {
 
       const sessionAfterSonnet = claudeService.getSession(chatId);
       expect(sessionAfterSonnet?.model).toBe('claude-sonnet-4.5');
+      expect(mockQueryImplementation.getCallCount()).toBe(1);
 
-      // Step 2: Switch to haiku
-      mockQueryImplementation.addResponse({
-        type: 'text',
-        text: 'Response from haiku',
-      });
+      // Step 2: session is still live between turns (see reviveLiveSession) —
+      // switch to haiku.
+      reviveLiveSession(chatId);
 
       await executionService.executeMessage(
         context,
@@ -427,11 +466,98 @@ describe('Claude Service - Comprehensive Integration Tests', () => {
         }
       );
 
-      // Step 3: Verify session recreated with new model
+      // Step 3: Verify the model switched WITHOUT a session restart —
+      // query() was never called again (no second/replacement session),
+      // and the live query's setModel() control request carried the new model.
+      expect(mockQueryImplementation.getCallCount()).toBe(1);
+      expect(mockQueryImplementation.getSetModelCalls()).toEqual(['claude-haiku-4']);
+
       const sessionAfterHaiku = claudeService.getSession(chatId);
       expect(sessionAfterHaiku?.model).toBe('claude-haiku-4');
 
-      console.log('✅ Session recreated when model changed');
+      console.log('✅ Model switched live, session was not restarted');
+    });
+
+    it('should still restart the session when permissions change (unaffected by the model live-switch)', async () => {
+      /**
+       * SCENARIO: Developer switches permission mode mid-conversation. This must
+       * keep restarting the session exactly as before — only the model-change
+       * branch adopts the live switch.
+       */
+
+      const chatId = 'chat-claude-004b';
+
+      await chatService.saveChat({
+        userId: testUserId,
+        chatId,
+        type: 'claude_code',
+        title: 'Test Permission Switch',
+        status: undefined,
+        repoPath: TEST_REPO_PATH,
+        agentSetupId: 'freestyle',
+        model: 'sonnet',
+        permissions: 'default',
+        parentChatId: undefined,
+        authToken,
+      });
+
+      const emitter = new TestEmitter();
+
+      mockQueryImplementation.addResponse({
+        type: 'text',
+        text: 'Response with default permissions',
+      });
+
+      const context = new TestContextBuilder()
+        .withUserId(testUserId)
+        .withUsername(TEST_USERNAME)
+        .withChatId(chatId)
+        .withEmitter(emitter)
+        .withAuthToken(authToken)
+        .build();
+
+      await executionService.executeMessage(
+        context,
+        { content: 'Message with default permissions' },
+        {
+          permissions: 'default',
+          model: 'claude-sonnet-4.5',
+          agentSetupId: 'freestyle',
+          isCodeProject: false,
+        }
+      );
+
+      expect(mockQueryImplementation.getCallCount()).toBe(1);
+
+      // Session is still live between turns (see reviveLiveSession) — switch
+      // permissions (model unchanged).
+      reviveLiveSession(chatId);
+
+      mockQueryImplementation.addResponse({
+        type: 'text',
+        text: 'Response with bypass permissions',
+      });
+
+      await executionService.executeMessage(
+        context,
+        { content: 'Message with bypass permissions' },
+        {
+          permissions: 'bypass_permissions',
+          model: 'claude-sonnet-4.5',
+          agentSetupId: 'freestyle',
+          isCodeProject: false,
+        }
+      );
+
+      // Permission change (model unchanged) still tears down and recreates the
+      // session — a second, distinct query() call — and never invokes setModel.
+      expect(mockQueryImplementation.getCallCount()).toBe(2);
+      expect(mockQueryImplementation.getSetModelCalls()).toEqual([]);
+
+      const sessionAfterSwitch = claudeService.getSession(chatId);
+      expect(sessionAfterSwitch?.permissions).toBe('bypass_permissions');
+
+      console.log('✅ Session still restarted when permissions changed');
     });
   });
 

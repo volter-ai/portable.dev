@@ -428,6 +428,7 @@ export class SocketIOService {
           model?: string;
           permissions?: string;
           agentSetupId?: string;
+          effort?: string;
           regenerationRequest?: any;
           aiStyle?: string;
           customAiStylePrompt?: string;
@@ -533,6 +534,7 @@ export class SocketIOService {
                   aiStyle: aiStyle as AIStyleMode,
                   customAiStylePrompt,
                   agentSetupId: prepared.effectiveAgentSetupId!,
+                  effort: prepared.effectiveEffort,
                   uploadedFiles: files,
                   isCodeProject: context?.isCodeProject,
                 }
@@ -612,13 +614,13 @@ export class SocketIOService {
       }
     );
 
-    // Update chat settings (model and/or permissions)
+    // Update chat settings (model and/or permissions and/or effort)
     socket.on(
       'chat:update_settings',
       async (
         data: {
           chatId: string;
-          settings: { model?: string; permissions?: string };
+          settings: { model?: string; permissions?: string; effort?: string };
         },
         callback
       ) => {

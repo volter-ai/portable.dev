@@ -32,6 +32,7 @@ import {
 import type { ChatListItem } from '@vgit2/shared/types';
 
 import { ChatCardBody } from './ChatCardBody';
+import { unseenGlowStyle, useChatUnseen } from '../chat/useChatUnseen';
 import { useAppTheme, withAlpha } from '../../theme';
 
 export interface HomeChatsSectionProps {
@@ -196,6 +197,7 @@ function HomeChatItem({
   onLongPress?: () => void;
 }) {
   const { theme } = useAppTheme();
+  const unseen = useChatUnseen(chat);
 
   return (
     <Pressable
@@ -211,6 +213,9 @@ function HomeChatItem({
           borderColor: theme.colors.border,
           opacity: pressed ? 0.85 : 1,
         },
+        // Orange glow for a changed-but-not-yet-opened chat (the un-clipped home/repo
+        // card shows the full colored-shadow halo).
+        unseen ? unseenGlowStyle(theme) : null,
       ]}
     >
       <ChatCardBody chat={chat} />

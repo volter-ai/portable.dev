@@ -2,7 +2,8 @@ import fs, { promises as fsPromises } from 'fs';
 import path from 'path';
 
 import { WORKSPACE_DIR } from '@vgit2/shared/constants';
-import { isModelMode } from '@vgit2/shared/models';
+import { isEffortLevel, getSupportedEffortLevels } from '@vgit2/shared/effort';
+import { isModelMode, type ModelMode } from '@vgit2/shared/models';
 import { getRepoFromPath } from '@vgit2/shared/utils/pathHelpers';
 import { Router } from 'express';
 
@@ -1035,6 +1036,7 @@ export function createRepositoryRoutes(
       if (chat.model) response.model = chat.model;
       if (chat.permissions) response.permissions = chat.permissions;
       if (chat.agent_setup_id) response.agentSetupId = chat.agent_setup_id;
+      if (chat.effort) response.effort = chat.effort;
 
       res.json(response);
     } catch (error) {
@@ -1046,7 +1048,7 @@ export function createRepositoryRoutes(
   // Update chat settings (model and/or permissions and/or agentSetupId)
   router.patch('/chat/:chatId/settings', requireAuth, async (req, res) => {
     const { chatId } = req.params;
-    const { model, permissions, agentSetupId } = req.body;
+    const { model, permissions, agentSetupId, effort } = req.body;
 
     // Extract JWT from Authorization header for request auth
     const authToken = getAuthToken(req);
@@ -1063,7 +1065,7 @@ export function createRepositoryRoutes(
 
       // Now validate request body
       // Require at least one setting to be provided
-      if (!model && !permissions && !agentSetupId) {
+      if (!model && !permissions && !agentSetupId && !effort) {
         return res.status(400).json({ error: 'At least one setting must be provided' });
       }
 
@@ -1090,10 +1092,30 @@ export function createRepositoryRoutes(
         }
       }
 
+      // Validate effort if provided — must be a known level AND supported by the
+      // chat's (possibly-just-updated) model, so a chat can never end up with an
+      // effort value its model rejects (e.g. Haiku, or 'xhigh' on Sonnet).
+      if (effort) {
+        if (typeof effort !== 'string' || !isEffortLevel(effort)) {
+          return res.status(400).json({ error: 'Invalid effort level' });
+        }
+        const effectiveModel: ModelMode | undefined =
+          model && isModelMode(model)
+            ? model
+            : chat.model && isModelMode(chat.model)
+              ? chat.model
+              : undefined;
+        if (!effectiveModel || !getSupportedEffortLevels(effectiveModel).includes(effort)) {
+          return res
+            .status(400)
+            .json({ error: `Model '${effectiveModel}' does not support effort '${effort}'` });
+        }
+      }
+
       await chatService.updateChatSettings(
         chatIdStr,
         userEmail,
-        { model, permissions, agentSetupId },
+        { model, permissions, agentSetupId, effort },
         authToken
       );
 
@@ -1103,10 +1125,11 @@ export function createRepositoryRoutes(
           model,
           permissions,
           agentSetupId,
+          effort,
         });
         socketIOService.broadcastToRoom(chatId as string, 'chat:settings_updated', {
           chatId: chatId as string,
-          settings: { model, permissions, agentSetupId },
+          settings: { model, permissions, agentSetupId, effort },
         });
       } else {
         console.warn(
@@ -1120,10 +1143,11 @@ export function createRepositoryRoutes(
           model?: string;
           permissions?: string;
           agentSetupId?: string;
+          effort?: string;
         };
       } = {
         success: true,
-        updated: { model, permissions, agentSetupId },
+        updated: { model, permissions, agentSetupId, effort },
       };
       res.json(response);
     } catch (error) {

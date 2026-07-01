@@ -530,6 +530,7 @@ export class ChatService {
       model?: string;
       permissions?: string;
       agentSetupId?: string;
+      effort?: string;
     },
     authToken?: string
   ): Promise<void> {
@@ -546,6 +547,11 @@ export class ChatService {
     // Update agentSetupId if provided
     if (settings.agentSetupId !== undefined) {
       await this.dbAdapter.updateAgentSetupId(chatId, userId, settings.agentSetupId, authToken);
+    }
+
+    // Update effort if provided
+    if (settings.effort !== undefined) {
+      await this.dbAdapter.updateEffort(chatId, userId, settings.effort, authToken);
     }
   }
 

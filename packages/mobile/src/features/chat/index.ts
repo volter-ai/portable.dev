@@ -99,9 +99,15 @@ export {
   BlockRenderer,
   TOOL_RENDERERS,
   renderMessageBlocks,
+  renderConsolidatedBlocks,
   consolidateBlocks,
+  groupFileEditBlocks,
+  isFileEditToolUse,
+  FileEditGroup,
   type BlockRendererProps,
   type ToolResult,
+  type FileEditSegment,
+  type FileEditGroupProps,
 } from './blocks';
 export {
   ChatChrome,

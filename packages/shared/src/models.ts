@@ -1,4 +1,4 @@
-export type ModelMode = 'sonnet' | 'opus' | 'haiku';
+export type ModelMode = 'fable' | 'sonnet' | 'opus' | 'haiku';
 
 export interface ModelConfig {
   value: ModelMode;
@@ -9,12 +9,21 @@ export interface ModelConfig {
 }
 
 export const MODELS: Record<ModelMode, ModelConfig> = {
+  fable: {
+    value: 'fable',
+    label: 'Fable 5',
+    description: 'Fable 5 (most intelligent)',
+    color: '#a855f7',
+    hoverColor: '#c084fc',
+  },
   sonnet: {
     value: 'sonnet',
     label: 'Sonnet 4.6',
     description: 'Sonnet 4.6 (smarter)',
-    color: 'rgba(255, 255, 255, 0.7)',
-    hoverColor: 'rgba(255, 255, 255, 0.9)',
+    // Theme-safe neutral gray — same white-on-white fix as EFFORT_LEVELS.high
+    // (currently unrendered, but keep no invisible-on-light sentinels around).
+    color: '#6b7280',
+    hoverColor: '#9ca3af',
   },
   opus: {
     value: 'opus',
@@ -34,12 +43,13 @@ export const MODELS: Record<ModelMode, ModelConfig> = {
 
 export const DEFAULT_MODEL_MODE: ModelMode = 'opus';
 
-export const MODEL_MODES: readonly ModelMode[] = ['opus', 'sonnet', 'haiku'] as const;
+export const MODEL_MODES: readonly ModelMode[] = ['fable', 'opus', 'sonnet', 'haiku'] as const;
 
 // Anthropic API model IDs for direct Anthropic SDK calls.
 // Claude Agent SDK sessions receive the ModelMode alias directly so the SDK can
 // resolve the default version for each model family.
 export const MODEL_IDS: Record<ModelMode, string> = {
+  fable: 'claude-fable-5',
   sonnet: 'claude-sonnet-4-6',
   opus: 'claude-opus-4-8',
   haiku: 'claude-haiku-4-5',

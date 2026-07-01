@@ -318,6 +318,7 @@ export interface StoredChat {
   playwright_device?: string | null; // 'mobile' | 'desktop' - Playwright browser device mode
   model?: string | null; // Model used for this chat (sonnet, haiku)
   permissions?: string | null; // Permission mode for this chat (default, plan, accept_edits, bypass_permissions)
+  effort?: string | null; // Reasoning effort level for this chat (low, medium, high, xhigh, max)
   last_read_message_id: number | null; // ID of the last message marked as read
   linked_issue?: string | null; // JSON string of {owner, repo, number} for linked GitHub issue
   parent_chat_id?: string | null; // ID of parent chat (snake_case for DB)

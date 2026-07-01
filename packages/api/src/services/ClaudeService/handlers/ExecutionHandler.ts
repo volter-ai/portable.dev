@@ -5,7 +5,8 @@ import * as path from 'path';
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { ANTHROPIC_API_KEY } from '@vgit2/shared/constants';
-import { DEFAULT_MODEL_MODE } from '@vgit2/shared/models';
+import { getSupportedEffortLevels, isEffortLevel } from '@vgit2/shared/effort';
+import { DEFAULT_MODEL_MODE, isModelMode } from '@vgit2/shared/models';
 
 import { createAskUserMcpServer } from '../../../mcp/AskUserMcpServer.js';
 import { loudError } from '../../../utils/loudError.js';
@@ -153,6 +154,7 @@ export class ExecutionHandler {
     playwrightDevice?: 'mobile' | 'desktop'; // Device mode for browser automation
     model?: string; // Model to use (sonnet or haiku)
     permissions?: string; // Permissions mode (default, automatic, ask)
+    effort?: string; // Reasoning effort level (low, medium, high, xhigh, max)
     authToken?: string; // JWT token for authentication and token extraction
     sessionGitHubToken?: string; // GitHub OAuth token from session (for dev mode OAuth login) [DEPRECATED - unused]
     agentSetupId?: string; // Agent setup configuration
@@ -167,6 +169,7 @@ export class ExecutionHandler {
       userId,
       model,
       permissions,
+      effort,
       authToken,
       // sessionGitHubToken, // No longer used - GitHub auth resolved via ConnectionsService
       agentSetupId = 'freestyle', // Default to freestyle if not specified
@@ -175,17 +178,37 @@ export class ExecutionHandler {
     // Check if we have an existing persistent session
     const existingSession = this.claudeCodeSessions.get(chatId);
 
-    // Check if session parameters changed (permissions or model)
-    // If changed, stop session to force recreation with new parameters
+    // Check if session parameters changed (permissions, model, or effort)
+    // Permissions and effort always force a recreate (the SDK has no live
+    // effort control request); a model-only change first tries the SDK's live
+    // query.setModel() control request (keeps the subprocess alive) and only
+    // falls back to a full restart if that isn't possible.
     if (existingSession && existingSession.query && existingSession.inputQueue) {
       const permissionsChanged = existingSession.permissions !== permissions;
       const modelChanged = existingSession.model !== model;
+      const effortChanged = existingSession.effort !== effort;
 
-      if (permissionsChanged || modelChanged) {
+      if (permissionsChanged || effortChanged) {
         console.log(
-          `[ClaudeService] [${userId}] Session params changed for ${chatId} — stopping to recreate`
+          `[ClaudeService] [${userId}] Permissions/effort changed for ${chatId} — stopping to recreate`
         );
         await this.sessionHandler.stopSession(chatId, userId);
+      } else if (modelChanged) {
+        const switchedLive = await this.sessionHandler.switchSessionModel(chatId, model);
+        if (switchedLive) {
+          console.log(`[ClaudeService] [${userId}] Model switched live for ${chatId} — no restart`);
+        } else {
+          console.log(
+            `[ClaudeService] [${userId}] Live model switch unavailable for ${chatId} — stopping to recreate`
+          );
+          // A concurrent teardown may have already stopped this exact session
+          // while the live-switch attempt was in flight — re-stopping an
+          // already-stopped session deletes it outright instead of leaving it
+          // resumable. Only stop if it's still actually running.
+          if (this.sessionHandler.isSessionRunning(chatId)) {
+            await this.sessionHandler.stopSession(chatId, userId);
+          }
+        }
       }
     }
 
@@ -259,6 +282,7 @@ export class ExecutionHandler {
     playwrightDevice?: 'mobile' | 'desktop';
     model?: string;
     permissions?: string;
+    effort?: string;
     authToken?: string; // JWT token for authentication and token extraction
     sessionGitHubToken?: string; // Session GitHub token for development OAuth [DEPRECATED - unused]
     agentSetupId?: string; // Agent setup configuration
@@ -277,6 +301,7 @@ export class ExecutionHandler {
       playwrightDevice = 'mobile',
       model,
       permissions,
+      effort,
       authToken,
       // sessionGitHubToken, // No longer used - GitHub auth resolved via ConnectionsService
       agentSetupId = 'freestyle',
@@ -499,6 +524,16 @@ export class ExecutionHandler {
       };
       const permMode = mapPermissionMode(permissions);
       const selectedModel = model || DEFAULT_MODEL_MODE;
+      // Only forward `effort` when it's a real level AND the selected model actually
+      // supports it — never send a value the model would reject (Haiku supports none,
+      // Sonnet doesn't support 'xhigh'). Omitted entirely otherwise, so the SDK falls
+      // back to its own default.
+      const selectedEffort =
+        effort && isEffortLevel(effort) && isModelMode(selectedModel)
+          ? getSupportedEffortLevels(selectedModel).includes(effort)
+            ? effort
+            : undefined
+          : undefined;
 
       // Note: GitHub operations use gh CLI via Bash tool
       // No need to manage GitHub tokens in ClaudeService
@@ -703,6 +738,7 @@ export class ExecutionHandler {
           ],
           permissionMode: permMode,
           model: selectedModel,
+          ...(selectedEffort ? { effort: selectedEffort } : {}),
           // When the user turned the AI co-author OFF, inject the disable via
           // the SDK's inline "flag settings" layer (the `--settings` tier — highest
           // priority among user-controlled settings, so it still wins over any
@@ -815,6 +851,7 @@ export class ExecutionHandler {
         userId, // Store userId for tunnel cleanup on stop
         model, // Store model selection
         permissions, // Store permissions mode
+        effort, // Store effort level (raw, pre-model-support-gating — used for change detection)
         isProcessing: true,
         lastActivityAt: Date.now(), // idle-reaper activity tracking
         authToken,

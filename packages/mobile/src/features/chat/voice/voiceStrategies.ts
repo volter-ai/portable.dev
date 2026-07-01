@@ -13,10 +13,11 @@
  *  - `cloud`: `requiresOnDeviceRecognition:false` — most accurate on some devices, but audio
  *    is sent OFF-DEVICE (Apple on iOS, Google on Android), so it is NOT private.
  *
- * The DEFAULT is per-platform (`getDefaultVoiceStrategy`): iOS → `continuous`, Android →
- * `dictation`. On-device strategies silently fall back to the platform's servers when the
- * device/locale has no on-device model (the native lib only sets `requiresOnDeviceRecognition`
- * when `supportsOnDeviceRecognition()` is true) — the UI surfaces that fallback.
+ * The DEFAULT is the on-device `dictation` model on EVERY platform — we never default to
+ * `cloud`, so no audio leaves the phone unless the user explicitly opts into Cloud mode.
+ * On-device strategies silently fall back to the platform's servers when the device/locale
+ * has no on-device model (the native lib only sets `requiresOnDeviceRecognition` when
+ * `supportsOnDeviceRecognition()` is true) — the UI surfaces that fallback.
  */
 
 import { Platform } from 'react-native';
@@ -66,16 +67,15 @@ export const VOICE_STRATEGIES: Record<VoiceStrategyId, VoiceStrategyDef> = {
 export const VOICE_STRATEGY_ORDER: VoiceStrategyId[] = ['dictation', 'continuous', 'cloud'];
 
 /**
- * The per-platform default strategy. iOS → `continuous` (the robust on-device path that does
- * NOT depend on the Android-only auto-restart-on-`end` loop — that loop reactivates the iOS
- * AVAudioSession with a capture gap and kills the mic after the first phrase). Android →
- * `dictation` (per-utterance; verified on the Samsung test device). `platformOS` is
- * injectable so the choice is unit-testable without reloading the module.
+ * The default strategy: the on-device `dictation` model on EVERY platform. This keeps audio
+ * on the phone by default (never `cloud`) and uses the plain local phone dictation model.
+ * `platformOS` is kept injectable so the choice stays unit-testable without reloading the
+ * module; it is currently platform-independent (both iOS and Android → `dictation`).
  */
 export function getDefaultVoiceStrategy(
-  platformOS: typeof Platform.OS = Platform.OS
+  _platformOS: typeof Platform.OS = Platform.OS
 ): VoiceStrategyId {
-  return platformOS === 'ios' ? 'continuous' : 'dictation';
+  return 'dictation';
 }
 
 export const DEFAULT_VOICE_STRATEGY: VoiceStrategyId = getDefaultVoiceStrategy();

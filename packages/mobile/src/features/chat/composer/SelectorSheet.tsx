@@ -15,6 +15,7 @@
 import { useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { useBottomInset } from './useBottomInset';
 import { useAppTheme } from '../../../theme';
 
 /** A selectable option (id + display name + optional description). */
@@ -41,6 +42,10 @@ export interface SelectorSheetProps {
 
 export function SelectorSheet(props: SelectorSheetProps) {
   const { theme } = useAppTheme();
+  // The sheet is pinned to the screen bottom, so its padding must absorb the
+  // system bottom inset (Android nav bar / iOS home indicator) or the last
+  // option renders behind it and can't be tapped.
+  const bottomInset = useBottomInset();
   const [search, setSearch] = useState('');
   // Start every reopen with a clean search (the sheet returns null while
   // hidden but stays mounted, so the query would otherwise persist).
@@ -70,7 +75,15 @@ export function SelectorSheet(props: SelectorSheetProps) {
         onPress={props.onClose}
         testID={`${props.testID}-backdrop`}
       />
-      <View style={[styles.sheet, { backgroundColor: theme.colors.backgroundElevated }]}>
+      <View
+        style={[
+          styles.sheet,
+          {
+            backgroundColor: theme.colors.backgroundElevated,
+            paddingBottom: 16 + bottomInset,
+          },
+        ]}
+      >
         <Text style={[styles.sheetTitle, { color: theme.colors.text }]}>{props.title}</Text>
         {props.searchable ? (
           <TextInput

@@ -9,6 +9,10 @@
  * The streaming "…" feel is LOCAL and instant: native interim results render as the pending
  * buffer with a trailing ellipsis; each FINALIZED utterance is appended. On stop the full
  * transcript (accumulated finals + the trailing interim) is assembled and inserted.
+ *
+ * A dedicated POST-FLUSH ECHO GUARD (`restatesSegment` in `handleResult`) absorbs the trailing
+ * final / restart-partial that re-states a just-committed segment after an utterance-end flush —
+ * without it, committed + pending render the phrase TWICE (the "doubled text" bug during pauses).
  */
 
 import { useCallback, useRef, useState } from 'react';
@@ -78,6 +82,21 @@ function continuesSegment(current: string, next: string): boolean {
   return normalizeForCompare(next).startsWith(normalizeForCompare(current));
 }
 
+/**
+ * Does `next` merely RE-STATE `prev` — an EXACT echo, or a cumulative EXTENSION (the same
+ * words plus more)? Used to catch the post-flush echo that causes the "doubled text" bug: after
+ * an utterance-end flush commits a segment and clears `pending`, the just-ended session can
+ * deliver a trailing final — or the auto-restarted session its first partial — that re-delivers
+ * that segment. Word-boundary-aware (`${p} `) so a shared prefix WORD ("go" vs "google") is not
+ * a false match; the exact-equality arm covers the single-word echo.
+ */
+function restatesSegment(prev: string, next: string): boolean {
+  const p = normalizeForCompare(prev);
+  const n = normalizeForCompare(next);
+  if (!p) return false;
+  return n === p || n.startsWith(`${p} `);
+}
+
 /** Commit a finalized segment, dropping an exact consecutive duplicate (guards the
  * iOS `end`-before-final ordering, where a late old-session final re-delivers the text
  * the utterance-end flush already committed). */
@@ -117,6 +136,19 @@ export function useNativeDictation(deps: UseNativeDictationDeps): NativeDictatio
     (result: SpeechResult) => {
       if (stoppedRef.current) return; // ignore trailing post-stop results
       const transcript = result.transcript;
+      // POST-FLUSH ECHO GUARD (fixes the "doubled text" bug). `pending` is empty ONLY right
+      // after an utterance-end/new-segment commit. In that window the just-ended session can
+      // deliver a trailing final — or the auto-restarted session its first partial — that
+      // RE-STATES (or cumulatively extends) the segment we just committed. Writing it back into
+      // `pending` would render/insert that phrase TWICE (committed + pending). Pop the committed
+      // segment back into the in-progress buffer so the REPLACE-based logic below owns it again:
+      // an exact echo collapses to one copy, an extension refines it in place — never a double.
+      if (!pendingRef.current && segmentsRef.current.length > 0) {
+        const last = segmentsRef.current[segmentsRef.current.length - 1];
+        if (restatesSegment(last, transcript)) {
+          segmentsRef.current.pop();
+        }
+      }
       // A genuinely NEW segment begins only when the previous result was already FINAL
       // and this transcript does NOT continue it (Android's segmented continuous mode);
       // commit the previous segment first. Otherwise REPLACE the in-progress segment —

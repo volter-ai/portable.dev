@@ -236,6 +236,14 @@ describe('useViewerChat — viewer AI actions', () => {
 
     const createEmits = controller.emissions.filter((e) => e.event === CLIENT_EVENTS.CHAT_CREATE);
     expect(createEmits[0].args[0]).toMatchObject({ model: 'haiku', permissions: 'plan' });
+
+    // Issue #4: the chat also owns a local settings snapshot of its own —
+    // independent of the global/project "last mode selected there", which a
+    // LATER chat can change without altering this one's.
+    expect(useChatStore.getState().chatSettings['chat-viewer-1']).toMatchObject({
+      model: 'haiku',
+      permissions: 'plan',
+    });
   });
 
   it('reports `connected: false` while the socket is mounted but down (drives the disabled button)', async () => {

@@ -2,12 +2,12 @@
  * Block renderer scaffold + core text/file blocks.
  *
  * Renders the native `BlockRenderer` against one fixture per CORE block type
- * (Text, Bash, BashOutput, Read, Write, Edit, Grep, Glob) and asserts:
+ * (Text, Bash, BashOutput, Read, Write, Edit, MultiEdit, Grep, Glob) and asserts:
  *   1. each block dispatches to its native renderer (by type, and for tool_use
  *      by toolName);
  *   2. text routes through `react-native-markdown-display` (mocked to a marker);
- *   3. code blocks render the native syntax highlighter and Edit renders the
- *      native +/- diff;
+ *   3. code blocks render the native syntax highlighter and Edit/MultiEdit render
+ *      the native +/- diff (MultiEdit: one per sub-edit);
  *   4. an unknown/unhandled block type renders the visible fallback placeholder
  *      (and NEVER raw JSON).
  */
@@ -121,6 +121,26 @@ describe('BlockRenderer — core text/file blocks', () => {
     expect(screen.getByTestId('tool-block-edit')).toBeTruthy();
     expect(screen.getByTestId('diff-highlight')).toBeTruthy();
     // The changed line shows as both a removed and an added diff line.
+    expect(screen.getAllByTestId('diff-line-remove').length).toBeGreaterThan(0);
+    expect(screen.getAllByTestId('diff-line-add').length).toBeGreaterThan(0);
+  });
+
+  it('renders a MultiEdit block as one diff per sub-edit under a single file header', () => {
+    renderBlock({
+      type: 'tool_use',
+      id: 't5b',
+      toolName: 'MultiEdit',
+      toolInput: {
+        file_path: '/a.ts',
+        edits: [
+          { old_string: 'let a = 1', new_string: 'let a = 2' },
+          { old_string: 'let b = 1', new_string: 'let b = 2' },
+        ],
+      },
+    });
+    expect(screen.getByTestId('tool-block-multi-edit')).toBeTruthy();
+    expect(screen.getByTestId('diff-highlight-0')).toBeTruthy();
+    expect(screen.getByTestId('diff-highlight-1')).toBeTruthy();
     expect(screen.getAllByTestId('diff-line-remove').length).toBeGreaterThan(0);
     expect(screen.getAllByTestId('diff-line-add').length).toBeGreaterThan(0);
   });

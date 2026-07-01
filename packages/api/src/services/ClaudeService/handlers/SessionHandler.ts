@@ -30,6 +30,9 @@ export class SessionHandler {
     string,
     { command: string; description: string; userId: string; chatId: string; repoPath?: string }
   >;
+  // Per-chat guard against overlapping switchSessionModel() calls (e.g. two
+  // devices switching models on the same chat within the same tick).
+  private modelSwitchesInFlight: Set<string> = new Set();
 
   constructor(
     dependencies: HandlerDependencies,
@@ -193,6 +196,66 @@ export class SessionHandler {
       console.error(`[SessionHandler] Error restoring session:`, error);
       return false;
     }
+  }
+
+  /**
+   * Live-switch the model on a running session's SDK query, instead of killing
+   * and recreating the subprocess. Only possible while the session holds an
+   * active streaming-input query (query + inputQueue) — the SDK's
+   * `Query.setModel()` control request is only available in that mode, which
+   * is always how sessions here are driven. Returns false (caller should fall
+   * back to the stop-and-recreate restart) when there's no live query, the SDK
+   * build in use doesn't expose `setModel`, the control request itself fails,
+   * or another switch is already in flight for this chat — session.model is
+   * left untouched in every false case.
+   *
+   * Two races this guards against (both possible via multi-device sync, the
+   * idle reaper, or a concurrent `chat:kill-session`, none of which take a
+   * lock on this chat while the SDK round-trip is in flight):
+   *  - Two overlapping calls for the same chat racing conflicting setModel()
+   *    requests against the same query — serialized via `switchesInFlight`.
+   *  - A concurrent stopSession() tearing the session down while this call is
+   *    awaiting the SDK — re-checked via object identity after the await so a
+   *    stale/replaced session never gets `.model` stamped onto it.
+   *
+   * @param chatId - Chat ID
+   * @param model - The model identifier to switch to (or undefined for default)
+   * @returns true if the live session's model was switched, false otherwise
+   */
+  async switchSessionModel(chatId: string, model?: string): Promise<boolean> {
+    const session = this.claudeCodeSessions.get(chatId);
+    if (!session || !session.query || !session.inputQueue) {
+      return false;
+    }
+    if (typeof session.query.setModel !== 'function') {
+      return false;
+    }
+    if (this.modelSwitchesInFlight.has(chatId)) {
+      return false;
+    }
+
+    this.modelSwitchesInFlight.add(chatId);
+    try {
+      await session.query.setModel(model);
+    } catch (error) {
+      console.error(`[SessionHandler] Live model switch failed for ${chatId}:`, error);
+      return false;
+    } finally {
+      this.modelSwitchesInFlight.delete(chatId);
+    }
+
+    // A concurrent stopSession() (idle reaper / kill-session / a racing
+    // permissions restart) may have torn this exact session down — or an
+    // entirely new one may have replaced it in the map — while the SDK call
+    // above was in flight. Only record the switch against the SAME live query
+    // we actually switched.
+    const current = this.claudeCodeSessions.get(chatId);
+    if (!current || current.query !== session.query) {
+      return false;
+    }
+
+    current.model = model;
+    return true;
   }
 
   /**

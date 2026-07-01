@@ -121,6 +121,7 @@ export interface SendChatMessageRequest {
 export interface UpdateChatSettingsRequest {
   model?: string;
   permissions?: string;
+  effort?: string;
 }
 
 export interface UpdateChatSettingsResponse {
@@ -128,6 +129,7 @@ export interface UpdateChatSettingsResponse {
   updated?: {
     model?: string;
     permissions?: string;
+    effort?: string;
   };
 }
 
@@ -141,6 +143,7 @@ export interface GetChatSettingsResponse {
   model?: string;
   permissions?: string;
   agentSetupId?: string;
+  effort?: string;
 }
 
 /**

@@ -26,6 +26,7 @@ import {
   SelectorSheet,
   ShortFormComposer,
 } from './composer';
+import { useBottomInset } from './composer/useBottomInset';
 import { faviconUrl, HOME_FRAMEWORKS } from './frameworks';
 import { ProjectCreationOverlay } from './ProjectCreationOverlay';
 import { useRecentProjects } from '../api/hooks';
@@ -89,21 +90,68 @@ export function ChatComposer({ headerRight, ...props }: ChatComposerProps) {
   return (
     <View style={styles.container} testID="chat-composer">
       {/* Header row above the card: the project-selection trigger (Auto detect /
-          New project / recent repo) on the left, an optional slot (the home profile
-          pill) on the right — same baseline, so the pill doesn't float in dead space. */}
+          New project / recent repo), the default-permissions trigger, and the
+          default-model trigger on the left, an optional slot (the home profile
+          pill) on the right — same baseline, so the pill doesn't float in dead
+          space. */}
       <View style={styles.headerRow}>
-        <Pressable
-          testID="composer-project-trigger"
-          accessibilityRole="button"
-          style={styles.projectTrigger}
-          onPress={() => setSheet('project')}
-        >
-          <ProjectTriggerContent
-            selection={composer.projectSelection}
-            color={theme.colors.textTertiary}
-          />
-          <Icon name="chevron-down" size={10} color={theme.colors.textTertiary} />
-        </Pressable>
+        <View style={styles.headerLeft}>
+          <Pressable
+            testID="composer-project-trigger"
+            accessibilityRole="button"
+            style={styles.projectTrigger}
+            onPress={() => setSheet('project')}
+          >
+            <ProjectTriggerContent
+              selection={composer.projectSelection}
+              color={theme.colors.textTertiary}
+            />
+            <Icon name="chevron-down" size={10} color={theme.colors.textTertiary} />
+          </Pressable>
+
+          {/* Default-permissions trigger: sets the permission every NEW chat inherits
+              (a chat already sticky to its own permission wins over this default — see
+              `resolveNewChatSettings`). Always visible (unlike the identical picker
+              hidden in the control row below) so the active default is visible at a
+              glance without expanding the composer. */}
+          <Pressable
+            testID="composer-permissions-trigger"
+            accessibilityRole="button"
+            accessibilityLabel={`Default permission: ${PERMISSIONS[composer.settings.permissions as PermissionMode]?.label ?? composer.settings.permissions}`}
+            style={[styles.projectTrigger, styles.permissionsTrigger]}
+            onPress={() => setSheet('permissions')}
+          >
+            <Icon name="shield" size={14} color={permissionColor} />
+            <Text
+              style={[styles.projectTriggerText, { color: theme.colors.textTertiary }]}
+              numberOfLines={1}
+            >
+              {PERMISSIONS[composer.settings.permissions as PermissionMode]?.label ??
+                composer.settings.permissions}
+            </Text>
+            <Icon name="chevron-down" size={10} color={theme.colors.textTertiary} />
+          </Pressable>
+
+          {/* Default-model trigger: sets the model every NEW chat inherits (same
+              store + sheet as the control-row "more" button — one picker, two entry
+              points). Plain label + chevron, deliberately NO icon: an icon here
+              reads as the Agents control. */}
+          <Pressable
+            testID="composer-model-trigger"
+            accessibilityRole="button"
+            accessibilityLabel={`Default model: ${MODELS[composer.settings.model as ModelMode]?.label ?? composer.settings.model}`}
+            style={[styles.projectTrigger, styles.modelTrigger]}
+            onPress={() => setSheet('model')}
+          >
+            <Text
+              style={[styles.projectTriggerText, { color: theme.colors.textTertiary }]}
+              numberOfLines={1}
+            >
+              {MODELS[composer.settings.model as ModelMode]?.label ?? composer.settings.model}
+            </Text>
+            <Icon name="chevron-down" size={10} color={theme.colors.textTertiary} />
+          </Pressable>
+        </View>
         {headerRight ? <View style={styles.headerRight}>{headerRight}</View> : null}
       </View>
 
@@ -366,6 +414,9 @@ function ProjectSheet(props: {
   onSelect: (selection: ProjectSelection) => void;
 }) {
   const { theme } = useAppTheme();
+  // Bottom-pinned sheet: absorb the system bottom inset (Android nav bar / iOS
+  // home indicator) so the last option isn't hidden behind it.
+  const bottomInset = useBottomInset();
   if (!props.visible) return null;
   return (
     <Modal
@@ -380,7 +431,15 @@ function ProjectSheet(props: {
         onPress={props.onClose}
         testID="project-sheet-backdrop"
       />
-      <View style={[styles.sheet, { backgroundColor: theme.colors.backgroundElevated }]}>
+      <View
+        style={[
+          styles.sheet,
+          {
+            backgroundColor: theme.colors.backgroundElevated,
+            paddingBottom: 16 + bottomInset,
+          },
+        ]}
+      >
         <Text style={[styles.sheetTitle, { color: theme.colors.text }]}>Project</Text>
         <ScrollView>
           <Pressable
@@ -456,6 +515,9 @@ const styles = StyleSheet.create({
   // The project trigger (left) + an optional right slot (the home profile pill) share
   // one baseline-aligned row so the pill no longer floats alone above the composer.
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  // Shrinks (rather than overflowing under the profile pill) when the project trigger's
+  // repo name + the permissions label don't both fit a narrow header row.
+  headerLeft: { flexDirection: 'row', alignItems: 'center', flexShrink: 1 },
   headerRight: { alignItems: 'flex-end' },
   projectTrigger: {
     flexDirection: 'row',
@@ -463,9 +525,16 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingVertical: 6,
     paddingHorizontal: 4,
+    flexShrink: 1,
   },
+  // The permissions label is short ("Ask for Edit" is the longest) — cap it well below
+  // the project trigger's 220 so the pair always leaves room for the profile pill.
+  permissionsTrigger: { flexShrink: 2, maxWidth: 110 },
+  // Model labels ("Sonnet 4.6", "Opus 4.8") are similarly short — same cap so the
+  // project + permissions + model triple still leaves room for the profile pill.
+  modelTrigger: { flexShrink: 2, maxWidth: 110 },
   projectTriggerInner: { flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: 220 },
-  projectTriggerText: { fontSize: 12 },
+  projectTriggerText: { fontSize: 12, flexShrink: 1 },
   projectTriggerAvatar: { width: 14, height: 14, borderRadius: 7 },
 
   card: {

@@ -102,9 +102,12 @@ describe('voice strategies', () => {
     expect(resolveVoiceStrategy('bogus').id).toBe(DEFAULT_VOICE_STRATEGY);
   });
 
-  it('defaults per platform: iOS → continuous, Android → dictation', () => {
-    expect(getDefaultVoiceStrategy('ios')).toBe('continuous');
+  it('defaults to the on-device dictation model on every platform (never cloud)', () => {
+    expect(getDefaultVoiceStrategy('ios')).toBe('dictation');
     expect(getDefaultVoiceStrategy('android')).toBe('dictation');
+    // The default must be on-device — audio never leaves the phone unless the user opts in.
+    expect(VOICE_STRATEGIES[getDefaultVoiceStrategy('ios')].onDevice).toBe(true);
+    expect(VOICE_STRATEGIES[getDefaultVoiceStrategy('android')].onDevice).toBe(true);
   });
 
   it('no strategy label/description leaks a platform name (Apple compliance)', () => {

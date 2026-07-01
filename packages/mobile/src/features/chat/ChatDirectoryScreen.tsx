@@ -54,12 +54,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ChatCategory, ChatListItem } from '@vgit2/shared/types';
 
 import { ChatCardBody } from '../home/ChatCardBody';
-import { Icon, useAppTheme, withAlpha } from '../../theme';
+import { Icon, mixColors, useAppTheme, withAlpha } from '../../theme';
 
 import { ChatActionSheet, ChatDeleteConfirmModal } from './ChatActionSheet';
 import { groupChatsByProject, type ChatProjectSection } from './groupChatsByProject';
 import { SwipeableChatRow } from './SwipeableChatRow';
 import { useChatDirectory } from './useChatDirectory';
+import { unseenGlowStyle, useChatUnseen } from './useChatUnseen';
 
 export interface ChatDirectoryScreenProps {
   /** Seed the initial tab with the archived list instead of the active list. */
@@ -323,6 +324,7 @@ function ChatRow({
   onLongPress: (chat: ChatListItem) => void;
 }) {
   const { theme } = useAppTheme();
+  const unseen = useChatUnseen(item);
 
   return (
     <SwipeableChatRow
@@ -382,12 +384,17 @@ function ChatRow({
           styles.card,
           {
             // Pinned chats are highlighted: a primary-tinted border + faint primary
-            // wash (+ the pin glyph + stronger title color from ChatCardBody).
+            // wash (+ the pin glyph + stronger title color from ChatCardBody). The
+            // wash is an OPAQUE blend — translucent and the swipe actions behind
+            // the card bleed through its right edge.
             backgroundColor: item.pinned
-              ? withAlpha(theme.colors.primary, '14')
+              ? mixColors(theme.colors.surface, theme.colors.primary, 0.08)
               : theme.colors.surface,
             borderColor: item.pinned ? theme.colors.primary : theme.colors.border,
           },
+          // A changed-but-not-yet-opened chat gets the orange glow, layered over the
+          // base/pinned style (border + wash carry it where the swipe row clips).
+          unseen ? unseenGlowStyle(theme) : null,
         ]}
         testID={`chat-open-${item.id}`}
         accessibilityRole="button"

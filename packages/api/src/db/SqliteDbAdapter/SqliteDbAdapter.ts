@@ -310,6 +310,7 @@ export class SqliteDbAdapter implements DbAdapter {
         model: model !== undefined ? model : (existing?.model ?? DEFAULT_MODEL_MODE),
         permissions:
           permissions !== undefined ? permissions : (existing?.permissions ?? 'bypass_permissions'),
+        effort: existing?.effort ?? null,
         agent_setup_id:
           agentSetupId !== undefined ? agentSetupId : (existing?.agent_setup_id ?? 'freestyle'),
         parent_chat_id:
@@ -632,6 +633,15 @@ export class SqliteDbAdapter implements DbAdapter {
     _authToken?: string
   ): Promise<boolean> {
     return this.store.patchChat(chatId, userId, () => ({ model }));
+  }
+
+  async updateEffort(
+    chatId: string,
+    userId: string,
+    effort: string,
+    _authToken?: string
+  ): Promise<boolean> {
+    return this.store.patchChat(chatId, userId, () => ({ effort }));
   }
 
   async updateAgentSetupId(

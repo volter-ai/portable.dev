@@ -106,6 +106,7 @@ export interface ChatMessagePayload {
   model?: string;
   permissions?: string;
   agentSetupId?: string;
+  effort?: string;
   aiStyle?: string;
   customAiStylePrompt?: string;
   customDisplay?: CustomDisplay;
@@ -127,7 +128,7 @@ export interface ChatMarkReadPayload {
 /** `chat:update_settings` */
 export interface ChatUpdateSettingsPayload {
   chatId: string;
-  settings: { model?: string; permissions?: string };
+  settings: { model?: string; permissions?: string; effort?: string };
 }
 
 /** `claude:interrupt` */

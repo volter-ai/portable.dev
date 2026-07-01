@@ -257,6 +257,148 @@ describe('Chat Lifecycle - Settings Variations', () => {
     expect(lastOptions?.options.model).toBe('claude-opus-4');
   });
 
+  it('forwards a supported effort level to query() for a model that supports it', async () => {
+    if (!setupSucceeded) {
+      console.warn('[TEST SKIP] test database not available');
+      return;
+    }
+    const chatId = 'chat-settings-effort-opus-xhigh';
+    await chatService.saveChat({
+      userId: testUserId,
+      chatId,
+      type: 'claude_code',
+      title: 'Effort Test (Opus, xhigh)',
+      status: undefined,
+      repoPath: TEST_REPO_PATH,
+      agentSetupId: 'freestyle',
+      model: 'sonnet',
+      permissions: 'default',
+      parentChatId: undefined,
+      authToken,
+    });
+
+    const context = new TestContextBuilder()
+      .withUserId(testUserId)
+      .withUsername(TEST_USERNAME)
+      .withChatId(chatId)
+      .withEmitter(emitter)
+      .withAuthToken(authToken)
+      .build();
+
+    await executionService.executeMessage(
+      context,
+      { content: 'test message' },
+      {
+        permissions: 'default',
+        model: 'opus',
+        effort: 'xhigh',
+        agentSetupId: 'freestyle',
+        isCodeProject: false,
+      }
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const lastOptions = mockQueryImplementation.getLastOptions();
+    expect(lastOptions?.options.model).toBe('opus');
+    expect((lastOptions?.options as { effort?: string })?.effort).toBe('xhigh');
+  });
+
+  it('omits effort from query() when the model does not support the requested level', async () => {
+    if (!setupSucceeded) {
+      console.warn('[TEST SKIP] test database not available');
+      return;
+    }
+    const chatId = 'chat-settings-effort-sonnet-xhigh';
+    await chatService.saveChat({
+      userId: testUserId,
+      chatId,
+      type: 'claude_code',
+      title: 'Effort Test (Sonnet, xhigh unsupported)',
+      status: undefined,
+      repoPath: TEST_REPO_PATH,
+      agentSetupId: 'freestyle',
+      model: 'sonnet',
+      permissions: 'default',
+      parentChatId: undefined,
+      authToken,
+    });
+
+    const context = new TestContextBuilder()
+      .withUserId(testUserId)
+      .withUsername(TEST_USERNAME)
+      .withChatId(chatId)
+      .withEmitter(emitter)
+      .withAuthToken(authToken)
+      .build();
+
+    // 'xhigh' is Opus/Fable-only — Sonnet must never receive it.
+    await executionService.executeMessage(
+      context,
+      { content: 'test message' },
+      {
+        permissions: 'default',
+        model: 'sonnet',
+        effort: 'xhigh',
+        agentSetupId: 'freestyle',
+        isCodeProject: false,
+      }
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const lastOptions = mockQueryImplementation.getLastOptions();
+    expect(lastOptions?.options.model).toBe('sonnet');
+    expect((lastOptions?.options as { effort?: string })?.effort).toBeUndefined();
+  });
+
+  it('omits effort from query() entirely for a model with no effort support (haiku)', async () => {
+    if (!setupSucceeded) {
+      console.warn('[TEST SKIP] test database not available');
+      return;
+    }
+    const chatId = 'chat-settings-effort-haiku';
+    await chatService.saveChat({
+      userId: testUserId,
+      chatId,
+      type: 'claude_code',
+      title: 'Effort Test (Haiku, unsupported)',
+      status: undefined,
+      repoPath: TEST_REPO_PATH,
+      agentSetupId: 'freestyle',
+      model: 'sonnet',
+      permissions: 'default',
+      parentChatId: undefined,
+      authToken,
+    });
+
+    const context = new TestContextBuilder()
+      .withUserId(testUserId)
+      .withUsername(TEST_USERNAME)
+      .withChatId(chatId)
+      .withEmitter(emitter)
+      .withAuthToken(authToken)
+      .build();
+
+    await executionService.executeMessage(
+      context,
+      { content: 'test message' },
+      {
+        permissions: 'default',
+        model: 'haiku',
+        effort: 'low',
+        agentSetupId: 'freestyle',
+        isCodeProject: false,
+      }
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const lastOptions = mockQueryImplementation.getLastOptions();
+    expect(lastOptions?.options.model).toBe('haiku');
+    expect((lastOptions?.options as { effort?: string })?.effort).toBeUndefined();
+  });
+
   it('includes the AI co-author trailer by default (no user setting)', async () => {
     if (!setupSucceeded) {
       console.warn('[TEST SKIP] test database not available');

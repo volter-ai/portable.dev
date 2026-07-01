@@ -1,40 +1,44 @@
 /**
- * renderMessageBlocks — consolidate + render a message's blocks.
+ * renderMessageBlocks — group + consolidate + render a message's blocks.
  *
- * The store keeps a `tool_use` and its `tool_result` as separate blocks; this
- * pairs them (`consolidateBlocks`) and renders each via `BlockRenderer`, the
- * single integration seam the MessageList uses so a message body shows real
- * native block content instead of one-line summaries.
+ * `groupFileEditBlocks` pulls a scope's `Write`/`Edit`/`MultiEdit` tool blocks
+ * into one `FileEditGroup` widget (the same "group by identity" treatment
+ * `groupBlocksByAgent` gives sub-agent output), so a busy multi-file turn renders
+ * one consolidated card instead of a stack of edit cards. Everything else renders
+ * exactly as before via `renderConsolidatedBlocks` — the single integration seam
+ * the MessageList uses so a message body shows real native block content instead
+ * of one-line summaries.
  */
 
-import { Fragment, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 import type { ClaudeStreamBlock } from '@vgit2/shared/socket';
 import type { MessageAction } from '@vgit2/shared/types';
 
-import { BlockRenderer } from './BlockRenderer';
-import { consolidateBlocks } from './blockHelpers';
+import { FileEditGroup } from './FileEditGroup';
+import { groupFileEditBlocks } from './groupFileEditBlocks';
+import { renderConsolidatedBlocks } from './renderConsolidatedBlocks';
 
 /**
- * Render a list of streamed blocks (tool_use paired with its tool_result).
- *
- * Keys are position-namespaced (`prefix-index-blockId`): the consolidated list
- * is append-only, so the index is stable, and the namespace guarantees sibling
- * uniqueness even if the server ever redelivers a block with the same
- * blockId/id (a bare `block.blockId` key produced React's "two children with
- * the same key" warning on every such redelivery).
- *
- * `onActionClick` is forwarded to each `BlockRenderer` so an `actions` block's
- * `MessageAction` chips fire their handler.
+ * Render a list of streamed blocks, consolidating consecutive/related file-edit
+ * blocks into a single `FileEditGroup` widget first (see module docs).
  */
 export function renderMessageBlocks(
   blocks: ClaudeStreamBlock[],
   keyPrefix: string,
   onActionClick?: (action: MessageAction) => void
 ): ReactNode {
-  return consolidateBlocks(blocks).map(({ block, result }, i) => (
-    <Fragment key={`${keyPrefix}-${i}-${block.blockId ?? block.id ?? block.type}`}>
-      <BlockRenderer block={block} result={result} onActionClick={onActionClick} />
-    </Fragment>
-  ));
+  return groupFileEditBlocks(blocks).flatMap((segment, si) => {
+    if (segment.type === 'file-edits') {
+      return [
+        <FileEditGroup
+          key={`${keyPrefix}-edits-${si}`}
+          blocks={segment.blocks}
+          keyPrefix={`${keyPrefix}-edits-${si}`}
+          onActionClick={onActionClick}
+        />,
+      ];
+    }
+    return renderConsolidatedBlocks(segment.blocks, `${keyPrefix}-${si}`, onActionClick);
+  });
 }

@@ -59,6 +59,10 @@ export function useViewerChat(options: UseViewerChatOptions = {}): UseViewerChat
         permissions: settings.permissions,
         agentSetupId: settings.agentSetupId,
       });
+      // Seed the chat's OWN local settings snapshot (issue #4 — a chat must
+      // keep the permission it was created with, never the project's mutable
+      // "last mode selected there").
+      useChatStore.getState().updateChatSettings(chatId, settings);
       // Order: navigate to the chat, close the viewer (caller does it on
       // `true`), then the prompt streams in.
       navigate(`/chat/${chatId}`);

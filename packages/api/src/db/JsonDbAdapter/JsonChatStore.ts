@@ -58,6 +58,7 @@ export interface ChatRow {
   playwright_device: string | null;
   model: string;
   permissions: string;
+  effort?: string | null;
   agent_setup_id: string | null;
   parent_chat_id: string | null;
   workflow_run_id: string | null;

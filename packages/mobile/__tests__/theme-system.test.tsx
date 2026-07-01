@@ -14,7 +14,7 @@ import { WhaleIcon } from '../src/theme/icons/WhaleIcon';
 import { createTheme } from '../src/theme/theme';
 import { getToolOperationType, createUnifiedToolPalette } from '../src/theme/toolColors';
 import { resolveBrightness } from '../src/theme/resolveBrightness';
-import { useAppTheme } from '../src/theme/useAppTheme';
+import { mixColors, useAppTheme } from '../src/theme/useAppTheme';
 
 // useAppTheme → useThemeStore → MMKV. Mock the native module (in-memory).
 jest.mock('react-native-mmkv', () => {
@@ -133,6 +133,21 @@ describe('useAppTheme — default (paper/orange)', () => {
     expect(result.current.theme.colors.background).toBe('#F5F1E8');
     expect(result.current.isDark).toBe(false);
     expect(result.current.boldGradient).toHaveLength(2);
+  });
+});
+
+describe('mixColors', () => {
+  it('opaquely blends the tint into the base by the given amount', () => {
+    // 12% of #EB7B47 into white: 255→253/239/233 per channel.
+    expect(mixColors('#FFFFFF', '#EB7B47', 0.12)).toBe('#fdefe9');
+    // The endpoints pass through.
+    expect(mixColors('#FFFFFF', '#EB7B47', 0)).toBe('#ffffff');
+    expect(mixColors('#FFFFFF', '#EB7B47', 1)).toBe('#eb7b47');
+  });
+
+  it('returns the base unchanged for a non-#RRGGBB input', () => {
+    expect(mixColors('rgba(0,0,0,0.5)', '#EB7B47', 0.12)).toBe('rgba(0,0,0,0.5)');
+    expect(mixColors('#FFFFFF', 'red', 0.12)).toBe('#FFFFFF');
   });
 });
 

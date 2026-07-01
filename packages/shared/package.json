@@ -26,6 +26,10 @@
       "types": "./src/models.ts",
       "default": "./src/models.ts"
     },
+    "./effort": {
+      "types": "./src/effort.ts",
+      "default": "./src/effort.ts"
+    },
     "./projectPrompts": {
       "types": "./src/projectPrompts.ts",
       "default": "./src/projectPrompts.ts"

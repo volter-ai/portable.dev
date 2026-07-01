@@ -35,6 +35,26 @@ export function withAlpha(color: string, alphaSuffix: string): string {
   return color.startsWith('#') && color.length === 7 ? `${color}${alphaSuffix}` : color;
 }
 
+const OPAQUE_HEX = /^#[0-9a-fA-F]{6}$/;
+
+/**
+ * Opaquely blend `amount` (0–1) of `tint` into `base` (both `#RRGGBB`). Use instead
+ * of a translucent {@link withAlpha} wash when the view must stay OPAQUE — a card
+ * whose background goes translucent lets whatever renders behind it bleed through
+ * (e.g. a swipe row's always-mounted action buttons). Non-`#RRGGBB` input → `base`.
+ */
+export function mixColors(base: string, tint: string, amount: number): string {
+  if (!OPAQUE_HEX.test(base) || !OPAQUE_HEX.test(tint)) return base;
+  const channel = (offset: number) => {
+    const b = parseInt(base.slice(offset, offset + 2), 16);
+    const t = parseInt(tint.slice(offset, offset + 2), 16);
+    return Math.round(b + (t - b) * amount)
+      .toString(16)
+      .padStart(2, '0');
+  };
+  return `#${channel(1)}${channel(3)}${channel(5)}`;
+}
+
 export function useAppTheme(): AppTheme {
   const scheme = useColorScheme();
 

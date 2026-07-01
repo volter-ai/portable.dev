@@ -52,6 +52,7 @@ class MockQueryImplementation {
   private pendingBlocks: MockBlock[] = [];
   private callCount = 0;
   private lastOptions: QueryOptions | null = null;
+  private setModelCalls: Array<string | undefined> = [];
 
   /**
    * Configure the response blocks for the next query call
@@ -92,6 +93,21 @@ class MockQueryImplementation {
   }
 
   /**
+   * Record a live query.setModel() control-request call (mirrors the real SDK's
+   * Query.setModel — only available in streaming input mode).
+   */
+  recordSetModel(model?: string): void {
+    this.setModelCalls.push(model);
+  }
+
+  /**
+   * Get every model passed to a live query.setModel() call, in call order.
+   */
+  getSetModelCalls(): Array<string | undefined> {
+    return [...this.setModelCalls];
+  }
+
+  /**
    * Reset mock state
    */
   reset(): void {
@@ -100,6 +116,7 @@ class MockQueryImplementation {
     this.pendingBlocks = [];
     this.callCount = 0;
     this.lastOptions = null;
+    this.setModelCalls = [];
   }
 
   /**
@@ -308,9 +325,22 @@ export const mockQueryImplementation = new MockQueryImplementation();
 /**
  * Mocked query function
  * This replaces the real query() from @anthropic-ai/claude-agent-sdk
+ *
+ * The real SDK's query() returns a `Query` object that is an AsyncGenerator PLUS
+ * control-request methods (interrupt/setModel/setPermissionMode/...) available only
+ * in streaming input mode. Only `setModel` is exercised by production code today
+ * (live model switching without a session restart), so that's the only control
+ * method mocked here.
  */
-export async function* query(options: QueryOptions): AsyncGenerator<any, void, unknown> {
-  yield* mockQueryImplementation.query(options);
+export function query(
+  options: QueryOptions
+): AsyncGenerator<any, void, unknown> & { setModel: (model?: string) => Promise<void> } {
+  const generator = mockQueryImplementation.query(options);
+  return Object.assign(generator, {
+    setModel: async (model?: string) => {
+      mockQueryImplementation.recordSetModel(model);
+    },
+  });
 }
 
 // Re-export other SDK types that ClaudeService might need

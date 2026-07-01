@@ -6,7 +6,7 @@
  * onboarding keep their own `signInTheme.ts`.
  */
 
-export { useAppTheme, withAlpha, type AppTheme } from './useAppTheme';
+export { useAppTheme, withAlpha, mixColors, type AppTheme } from './useAppTheme';
 export {
   createTheme,
   lh,

@@ -8,6 +8,7 @@
  */
 
 import { DEFAULT_AI_STYLE, type AIStyleMode } from '@vgit2/shared/aiStyles';
+import { DEFAULT_EFFORT_LEVEL } from '@vgit2/shared/effort';
 import { DEFAULT_MODEL_MODE } from '@vgit2/shared/models';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
@@ -18,6 +19,7 @@ export interface ChatSettings {
   model?: string;
   permissions?: string;
   agentSetupId?: string;
+  effort?: string;
 }
 
 /**
@@ -35,6 +37,7 @@ export const DEFAULT_NEW_CHAT_SETTINGS: NewChatSettings = {
   model: DEFAULT_MODEL_MODE,
   permissions: 'bypass_permissions',
   agentSetupId: 'freestyle',
+  effort: DEFAULT_EFFORT_LEVEL,
 };
 
 /**

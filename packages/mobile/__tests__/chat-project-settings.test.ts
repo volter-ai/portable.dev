@@ -51,6 +51,7 @@ describe('resolveNewChatSettings — precedence', () => {
     model: 'opus',
     permissions: 'bypass_permissions',
     agentSetupId: 'orchestrator',
+    effort: 'high',
   };
 
   it('falls back to the global last-used when the project has no record', () => {

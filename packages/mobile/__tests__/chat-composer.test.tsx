@@ -137,6 +137,7 @@ describe('chat input (selectors, draft, create-chat flow)', () => {
           model: 'sonnet',
           permissions: 'bypass_permissions',
           agentSetupId: 'best-practice',
+          effort: 'high',
         },
       });
       useSocketStore.getState().reset();
@@ -243,6 +244,27 @@ describe('chat input (selectors, draft, create-chat flow)', () => {
     await waitFor(() => expect(screen.getByTestId('agent-option-freestyle')).toBeTruthy());
     fireEvent.press(screen.getByTestId('agent-option-freestyle'));
     expect(useChatStore.getState().newChatSettings.agentSetupId).toBe('freestyle');
+  });
+
+  it('shows a default-permissions button beside "Auto detect" that sets the new-chat default without expanding the composer', async () => {
+    await mount();
+
+    // Visible BEFORE the input is ever focused/expanded — unlike the control-row
+    // permissions button (which only reveals once the card expands), this one
+    // labels the current default at a glance (issue #5, ac).
+    expect(screen.getByTestId('composer-permissions-trigger')).toBeTruthy();
+    expect(screen.getByText('Bypass')).toBeTruthy();
+
+    // Tapping it opens the SAME permissions sheet the (hidden) control-row button
+    // opens — one picker, two entry points.
+    fireEvent.press(screen.getByTestId('composer-permissions-trigger'));
+    expect(screen.getByTestId('permissions-sheet')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('permissions-option-plan'));
+
+    // The GLOBAL new-chat default updates (every future new chat inherits it),
+    // and the button's label reflects the new default immediately.
+    expect(useChatStore.getState().newChatSettings.permissions).toBe('plan');
+    expect(screen.getByText('Plan')).toBeTruthy();
   });
 
   it('hides the text input while the voice surface is active', async () => {

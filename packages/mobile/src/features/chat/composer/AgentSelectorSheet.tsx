@@ -19,6 +19,8 @@ import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'rea
 
 import type { AgentSetup, SubAgentDefinition } from '@vgit2/shared/types';
 
+import { useBottomInset } from './useBottomInset';
+
 import { useAppTheme, withAlpha } from '../../../theme';
 
 /** The web default when an agent ships no `colorTheme` (`AgentSetupButton`). */
@@ -66,6 +68,9 @@ export interface AgentSelectorSheetProps {
 
 export function AgentSelectorSheet(props: AgentSelectorSheetProps) {
   const { theme } = useAppTheme();
+  // Bottom-pinned sheet: absorb the system bottom inset (Android nav bar / iOS
+  // home indicator) so the last option isn't hidden behind it.
+  const bottomInset = useBottomInset();
   if (!props.visible) return null;
   return (
     <Modal
@@ -80,7 +85,15 @@ export function AgentSelectorSheet(props: AgentSelectorSheetProps) {
         onPress={props.onClose}
         testID={`${props.testID}-backdrop`}
       />
-      <View style={[styles.sheet, { backgroundColor: theme.colors.backgroundElevated }]}>
+      <View
+        style={[
+          styles.sheet,
+          {
+            backgroundColor: theme.colors.backgroundElevated,
+            paddingBottom: 16 + bottomInset,
+          },
+        ]}
+      >
         <Text style={[styles.title, { color: theme.colors.text }]}>Select Agent</Text>
         <ScrollView>
           {props.setups.map((setup) => (

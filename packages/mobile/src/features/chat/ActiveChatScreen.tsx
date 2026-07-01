@@ -38,6 +38,7 @@ import { LinkedIssueBadge } from '../home/LinkedIssueBadge';
 import { isImage, type UploadedAttachment } from './attachments';
 import { getAgentInfo } from './agentInfo';
 import { useChatMessagesStore } from './chatMessagesStore';
+import { useChatSeenStore } from './chatSeenStore';
 import { ChatChrome } from './chrome/ChatChrome';
 import { useChatLinkedIssue } from './chrome/useChatLinkedIssue';
 import { useChatRepoPath } from './chrome/useChatRepoPath';
@@ -82,6 +83,17 @@ export function ActiveChatScreen() {
     handledForkSeqRef.current = lastForkedChat.seq;
     router.replace(`/chat/${lastForkedChat.newChatId}`);
   }, [lastForkedChat, id, router]);
+
+  // Opening a chat clears its "unseen change" highlight in the chat lists — mark it
+  // seen on mount, and again on leave so activity that streamed in while it was open
+  // doesn't re-glow the row the moment the user backs out. `Date.now()` is a safe
+  // upper bound: a chat's `lastUpdated` reflects PAST activity, so it never exceeds now.
+  const markChatSeen = useChatSeenStore((s) => s.markSeen);
+  useEffect(() => {
+    if (!id) return;
+    markChatSeen(id, Date.now());
+    return () => markChatSeen(id, Date.now());
+  }, [id, markChatSeen]);
 
   const repoPath = useChatRepoPath(id);
   // Per-project sticky settings ("last mode selected there"): key the chat's

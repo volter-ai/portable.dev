@@ -334,6 +334,55 @@ describe('useNativeDictation — ViewModel', () => {
     expect(onTranscription).toHaveBeenCalledWith('first sentence. second sentence.');
   });
 
+  it('does NOT double a segment when a trailing/echo result re-states it after an utterance-end flush', async () => {
+    // The "doubled text" bug: on Android `dictation`, a pause fires `end` (→ utterance-end
+    // flush commits the segment + clears pending) and THEN the just-ended session delivers a
+    // trailing final — or the auto-restarted session echoes its first partial — that merely
+    // RE-STATES the segment we just committed. With `pending` empty, the naive accumulator
+    // wrote that echo straight back into `pending`, so committed + pending rendered the phrase
+    // TWICE (and, non-consecutively, inserted it twice).
+    const { recognizer, emit, endUtterance } = fakeRecognizer();
+    const onTranscription = jest.fn();
+    const { result } = renderHook(() => useNativeDictation({ recognizer, onTranscription }));
+
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => emit('first sentence.', true));
+    act(() => endUtterance()); // pause → commit 'first sentence.', clear pending, (auto-restart)
+    // ECHO of the just-committed segment (late final / restart partial) — must NOT double it.
+    act(() => emit('first sentence.', true));
+    expect(result.current.liveText).toBe('first sentence.'); // display shows it ONCE
+    // A genuinely new utterance still accumulates normally.
+    act(() => emit('second sentence.', true));
+    await act(async () => {
+      await result.current.stop();
+    });
+
+    expect(onTranscription).toHaveBeenCalledWith('first sentence. second sentence.');
+  });
+
+  it('absorbs a cumulative echo that EXTENDS the just-committed segment across the flush', async () => {
+    // A softer echo: after the flush, the restarted session re-delivers the committed words
+    // PLUS more ("first sentence." → "first sentence. and more"). The extension must refine the
+    // segment in place, not append a second copy of "first sentence.".
+    const { recognizer, emit, endUtterance } = fakeRecognizer();
+    const onTranscription = jest.fn();
+    const { result } = renderHook(() => useNativeDictation({ recognizer, onTranscription }));
+
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => emit('first sentence.', true));
+    act(() => endUtterance());
+    act(() => emit('first sentence. and more', true)); // echo + extension
+    await act(async () => {
+      await result.current.stop();
+    });
+
+    expect(onTranscription).toHaveBeenCalledWith('first sentence. and more');
+  });
+
   it('assembles multiple finalized utterances in order on stop', async () => {
     const { recognizer, emit } = fakeRecognizer();
     const onTranscription = jest.fn();

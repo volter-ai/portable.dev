@@ -80,6 +80,7 @@ function normalizeLegacyChat(id: string, raw: any): ChatRow | null {
     playwright_device: raw.playwright_device ?? null,
     model: raw.model ?? 'opus',
     permissions: raw.permissions ?? 'bypass_permissions',
+    effort: raw.effort ?? null,
     agent_setup_id: raw.agent_setup_id ?? null,
     parent_chat_id: raw.parent_chat_id ?? null,
     workflow_run_id: raw.workflow_run_id ?? null,

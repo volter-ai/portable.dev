@@ -4,17 +4,22 @@
  * The native parity of the web's "same input, different container" model: it reuses
  * the SAME visual body as the home {@link ChatComposer} (the attachment "+",
  * text field, unified mic↔send button, and the agent / permissions /
- * model control row + the shared {@link SelectorSheet} bottom sheets) but with the
- * ACTIVE-CHAT container chrome — docked to the bottom of the transcript: a single
- * top border, top-rounded corners, transparent background, NO shadow (vs the home
- * elevated pill). And, crucially, a DIFFERENT wiring:
+ * model / effort control row + the shared {@link SelectorSheet} bottom sheets) but
+ * with the ACTIVE-CHAT container chrome — docked to the bottom of the transcript: a
+ * single top border, top-rounded corners, transparent background, NO shadow (vs the
+ * home elevated pill). And, crucially, a DIFFERENT wiring:
  *
  *   - it sends a FOLLOW-UP into the EXISTING chat via the injected {@link onSend}
  *     (ActiveChatScreen passes the offline-queue `send`, so a message survives a
  *     disconnect + auto-flushes on reconnect) — NOT the new-chat creation flow;
- *   - the model / permissions / agent selectors read + write the
+ *   - the model / permissions / effort / agent selectors read + write the
  *     PER-CHAT settings (`useChatSettings(chatId)`), persisting via
- *     `PATCH /api/chat/:id/settings` — NOT the global new-chat defaults;
+ *     `PATCH /api/chat/:id/settings` — NOT the global new-chat defaults. Effort is
+ *     only offered for models that support it (hidden entirely for Haiku), and only
+ *     the levels the current model supports (e.g. no X-High for Sonnet), so the
+ *     picker can never send a value the model would reject — like a model change,
+ *     it applies starting with the next message (the backend recreates any live
+ *     session whose effort no longer matches, same as a model/permissions change);
  *   - a Stop button appears while the run is `running`/`interrupting`
  *     (`claude:interrupt`) — a red strike-through glyph (circle-slash) on a
  *     transparent field that lives in the CONTROL ROW the whole time a run is
@@ -28,7 +33,13 @@
  * those home-only affordances).
  */
 
-import { MODELS, MODEL_MODES } from '@vgit2/shared/models';
+import {
+  DEFAULT_EFFORT_LEVEL,
+  EFFORT_LEVELS,
+  getSupportedEffortLevels,
+  type EffortLevel,
+} from '@vgit2/shared/effort';
+import { isModelMode, MODELS, MODEL_MODES, type ModelMode } from '@vgit2/shared/models';
 import { PERMISSIONS, PERMISSION_MODES, type PermissionMode } from '@vgit2/shared/permissions';
 import type { AgentSetup, ChatStatus } from '@vgit2/shared/types';
 import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from 'react';
@@ -50,7 +61,7 @@ import type { ChatSettings } from '../state';
 
 import { Icon, useAppTheme } from '../../theme';
 
-type SheetKind = 'model' | 'permissions' | 'agent' | null;
+type SheetKind = 'model' | 'permissions' | 'agent' | 'effort' | null;
 
 export interface FollowUpComposerProps {
   /** The chat this composer sends follow-ups into. */
@@ -121,6 +132,16 @@ export const FollowUpComposer = forwardRef<FollowUpComposerHandle, FollowUpCompo
     const currentSetup = agentSetups.find((a) => a.id === settings.agentSetupId) ?? agentSetups[0];
     const permissionColor =
       PERMISSIONS[settings.permissions as PermissionMode]?.color ?? theme.colors.textSecondary;
+
+    // Effort (reasoning depth) is only offered when the chat's current model
+    // supports it at all (Haiku doesn't), and only the levels THAT model
+    // supports (Sonnet has no 'xhigh') — never let the picker send a value the
+    // model would reject.
+    const supportedEffortLevels = isModelMode(settings.model)
+      ? getSupportedEffortLevels(settings.model as ModelMode)
+      : [];
+    const effortSupported = supportedEffortLevels.length > 0;
+    const effortColor = EFFORT_LEVELS[settings.effort as keyof typeof EFFORT_LEVELS]?.color;
 
     // Slash-command picker (the "enriched form for slash commands"): the SDK-scoped
     // commands + skills available to this chat's repo.
@@ -255,6 +276,20 @@ export const FollowUpComposer = forwardRef<FollowUpComposerHandle, FollowUpCompo
               <Icon name="chevron-up" size={10} color={theme.colors.textSecondary} />
             </Pressable>
 
+            {/* Effort — hidden entirely when the current model doesn't support it
+                (Haiku), rather than shown disabled. */}
+            {effortSupported ? (
+              <Pressable
+                testID="open-effort-sheet"
+                accessibilityRole="button"
+                style={styles.control}
+                onPress={() => setSheet('effort')}
+              >
+                <Icon name="bolt" size={14} color={effortColor ?? theme.colors.textSecondary} />
+                <Icon name="chevron-up" size={10} color={theme.colors.textSecondary} />
+              </Pressable>
+            ) : null}
+
             <View style={styles.spacer} />
 
             {isRunning && onStop ? (
@@ -300,7 +335,21 @@ export const FollowUpComposer = forwardRef<FollowUpComposerHandle, FollowUpCompo
           selectedId={settings.model}
           optionTestIdPrefix="model-option"
           onSelect={(id) => {
-            onUpdateSettings({ model: id });
+            // The new model may not support the currently-selected effort level
+            // (e.g. Opus X-High -> Sonnet) — clamp it in the SAME update so the
+            // chat never carries a stale, model-incompatible effort value.
+            const nextSupported = isModelMode(id) ? getSupportedEffortLevels(id as ModelMode) : [];
+            const effortStillSupported = nextSupported.includes(settings.effort as EffortLevel);
+            onUpdateSettings({
+              model: id,
+              ...(nextSupported.length > 0 && !effortStillSupported
+                ? {
+                    effort: nextSupported.includes(DEFAULT_EFFORT_LEVEL)
+                      ? DEFAULT_EFFORT_LEVEL
+                      : nextSupported[nextSupported.length - 1],
+                  }
+                : {}),
+            });
             setSheet(null);
           }}
         />
@@ -320,6 +369,25 @@ export const FollowUpComposer = forwardRef<FollowUpComposerHandle, FollowUpCompo
           optionTestIdPrefix="permissions-option"
           onSelect={(id) => {
             onUpdateSettings({ permissions: id });
+            setSheet(null);
+          }}
+        />
+
+        {/* Effort bottom sheet — only the levels the current model supports. */}
+        <SelectorSheet
+          testID="effort-sheet"
+          visible={sheet === 'effort'}
+          title="Reasoning Effort"
+          onClose={() => setSheet(null)}
+          options={supportedEffortLevels.map((e) => ({
+            id: e,
+            name: EFFORT_LEVELS[e].label,
+            description: EFFORT_LEVELS[e].description,
+          }))}
+          selectedId={settings.effort}
+          optionTestIdPrefix="effort-option"
+          onSelect={(id) => {
+            onUpdateSettings({ effort: id });
             setSheet(null);
           }}
         />

@@ -299,6 +299,44 @@ describe('API Routes - Chat Settings & Permissions', () => {
       // 400 for validation, 404 if not found, 200 if service handles gracefully, 500 on store error
       expect([200, 400, 404, 500]).toContain(response.status);
     });
+
+    it('should persist a valid effort level for a model that supports it', async () => {
+      const response = await request(app)
+        .patch(`/api/chat/${testChatId}/settings`)
+        .send({ model: 'opus', effort: 'xhigh' })
+        .set('Content-Type', 'application/json')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.updated.effort).toBe('xhigh');
+
+      const getResponse = await request(app)
+        .get(`/api/chat/${testChatId}/settings`)
+        .set('Authorization', `Bearer ${authToken}`);
+      expect(getResponse.status).toBe(200);
+      expect(getResponse.body.effort).toBe('xhigh');
+    });
+
+    it('should reject an effort level the chat model does not support', async () => {
+      // 'xhigh' is not in Sonnet's supported range (Low/Medium/High/Max only).
+      const response = await request(app)
+        .patch(`/api/chat/${testChatId}/settings`)
+        .send({ model: 'sonnet', effort: 'xhigh' })
+        .set('Content-Type', 'application/json')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(response.status).toBe(400);
+    });
+
+    it('should reject an unknown effort level string', async () => {
+      const response = await request(app)
+        .patch(`/api/chat/${testChatId}/settings`)
+        .send({ effort: 'ultra' })
+        .set('Content-Type', 'application/json')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(response.status).toBe(400);
+    });
   });
 
   describe('PATCH /api/chats/:chatId/archive', () => {

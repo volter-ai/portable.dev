@@ -8,18 +8,21 @@
  * local Zustand override (the user's optimistic in-app change wins until synced).
  */
 
+import { DEFAULT_EFFORT_LEVEL } from '@vgit2/shared/effort';
 import { DEFAULT_MODEL_MODE } from '@vgit2/shared/models';
 import type { ChatSettings } from '../state';
 
 /**
  * New-chat defaults:
  *   model = DEFAULT_MODEL_MODE ('opus'), permissions = 'bypass_permissions',
- *   agentSetupId = 'freestyle' (the unopinionated direct-execution agent).
+ *   agentSetupId = 'freestyle' (the unopinionated direct-execution agent),
+ *   effort = DEFAULT_EFFORT_LEVEL ('high', the SDK's own default).
  */
 export const NEW_CHAT_SETTINGS: Required<ChatSettings> = {
   model: DEFAULT_MODEL_MODE,
   permissions: 'bypass_permissions',
   agentSetupId: 'freestyle',
+  effort: DEFAULT_EFFORT_LEVEL,
 };
 
 /** Drop `undefined` keys so a partial source never clobbers a lower layer. */
@@ -29,6 +32,7 @@ function defined(settings?: Partial<ChatSettings>): Partial<ChatSettings> {
   if (settings.model !== undefined) out.model = settings.model;
   if (settings.permissions !== undefined) out.permissions = settings.permissions;
   if (settings.agentSetupId !== undefined) out.agentSetupId = settings.agentSetupId;
+  if (settings.effort !== undefined) out.effort = settings.effort;
   return out;
 }
 

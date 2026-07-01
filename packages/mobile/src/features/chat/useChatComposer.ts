@@ -188,6 +188,7 @@ export function useChatComposer(options: UseChatComposerOptions = {}): UseChatCo
   const settings = useChatStore((s) => s.newChatSettings);
   const setNewChatSettings = useChatStore((s) => s.setNewChatSettings);
   const setProjectChatSettings = useChatStore((s) => s.setProjectChatSettings);
+  const updateChatSettings = useChatStore((s) => s.updateChatSettings);
 
   const [submitting, setSubmitting] = useState(false);
   const [creation, setCreation] = useState<ProjectCreationStatus | null>(null);
@@ -441,6 +442,11 @@ export function useChatComposer(options: UseChatComposerOptions = {}): UseChatCo
           setTextState('');
         }
         setResult(flowResult);
+        // Seed the chat's OWN local settings snapshot — issue #4: this chat must keep
+        // showing the permission it was created with for its whole lifetime, never the
+        // project's (mutable) "last mode selected there", which a LATER chat in the same
+        // project can overwrite.
+        updateChatSettings(flowResult.chatId, settings);
         // Remember the settings used as this project's "last mode selected there"
         // so the next chat for the resolved repo inherits it (per-project sticky).
         setProjectChatSettings(projectKeyForOwnerRepo(flowResult.owner, flowResult.repo), settings);
@@ -481,6 +487,7 @@ export function useChatComposer(options: UseChatComposerOptions = {}): UseChatCo
       setProjectChatSettings,
       settings,
       socket,
+      updateChatSettings,
       text,
     ]
   );

@@ -34,7 +34,7 @@ import {
 } from './AgentToolBlocks';
 import { BashBlock, BashOutputBlock } from './BashBlock';
 import { ErrorBlock } from './ErrorBlock';
-import { EditBlock, ReadBlock, WriteBlock } from './FileBlocks';
+import { EditBlock, MultiEditBlock, ReadBlock, WriteBlock } from './FileBlocks';
 import { FallbackBlock } from './FallbackBlock';
 import { resolveGitHubRenderer } from './GitHubBlocks';
 import { ConnectionRequestBlock, PermissionBlock, SecretsBlock } from './InteractionBlocks';
@@ -75,6 +75,7 @@ export const TOOL_RENDERERS: Record<string, ComponentType<ToolBlockProps>> = {
   Read: ReadBlock,
   Write: WriteBlock,
   Edit: EditBlock,
+  MultiEdit: MultiEditBlock,
   Grep: GrepBlock,
   Glob: GlobBlock,
   TodoWrite: TodoBlock,
@@ -207,6 +208,7 @@ export const BLOCK_COVERAGE = {
     'Read',
     'Write',
     'Edit',
+    'MultiEdit',
     'Grep',
     'Glob',
     'TodoWrite',

@@ -53,6 +53,7 @@ interface DbChatRow {
   playwright_device: string | null;
   model: string;
   permissions: string;
+  effort: string | null;
   agent_setup_id: string | null;
   parent_chat_id: string | null;
   workflow_run_id: string | null;
@@ -73,7 +74,7 @@ interface DbMessageRow {
 const CHAT_COLUMNS =
   'id, user_id, type, title, summary, status, hidden, archived, saved, pinned, last_updated, ' +
   'repo_path, repo_full_name, session_id, fork_source_session_id, system_prompt, playwright_device, model, permissions, ' +
-  'agent_setup_id, parent_chat_id, workflow_run_id, routine_id, ' +
+  'effort, agent_setup_id, parent_chat_id, workflow_run_id, routine_id, ' +
   'last_read_message_id, linked_issue, created_at';
 const CHAT_PLACEHOLDERS = CHAT_COLUMNS.split(',')
   .map(() => '?')
@@ -139,6 +140,7 @@ export class SqliteChatStore {
         playwright_device TEXT,
         model TEXT NOT NULL,
         permissions TEXT NOT NULL,
+        effort TEXT,
         agent_setup_id TEXT,
         parent_chat_id TEXT,
         workflow_run_id TEXT,
@@ -170,11 +172,13 @@ export class SqliteChatStore {
         // Column already exists.
       }
     }
-    // Add fork_source_session_id (fork-on-first-write) + repo_full_name to a
+    // Add fork_source_session_id (fork-on-first-write) + repo_full_name + effort to a
     // PRE-EXISTING chats table the same way — nullable TEXT, idempotent (ALTER throws
     // once present, caught). repo_full_name was previously synthesized-only (never a
     // column); it is now persisted so a forked/native chat's card shows the repo name.
-    for (const col of ['fork_source_session_id', 'repo_full_name'] as const) {
+    // effort is unset (null) until a user explicitly picks a reasoning-effort level —
+    // the SDK applies its own default when the field is omitted.
+    for (const col of ['fork_source_session_id', 'repo_full_name', 'effort'] as const) {
       try {
         this.db.exec(`ALTER TABLE chats ADD COLUMN ${col} TEXT`);
       } catch {
@@ -259,6 +263,7 @@ export class SqliteChatStore {
         row.playwright_device,
         row.model,
         row.permissions,
+        row.effort ?? null,
         row.agent_setup_id,
         row.parent_chat_id,
         row.workflow_run_id,
@@ -405,6 +410,7 @@ export class SqliteChatStore {
           row.playwright_device,
           row.model,
           row.permissions,
+          row.effort ?? null,
           row.agent_setup_id,
           row.parent_chat_id,
           row.workflow_run_id,

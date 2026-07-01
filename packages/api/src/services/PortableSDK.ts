@@ -379,6 +379,7 @@ export class PortableSDK {
               model: chat.model || DEFAULT_MODEL_MODE,
               permissions: chat.permissions || 'default',
               agentSetupId: chat.agent_setup_id || 'freestyle',
+              effort: chat.effort || undefined,
             }
           )
           .catch((error: any) => {

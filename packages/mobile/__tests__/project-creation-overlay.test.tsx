@@ -181,6 +181,7 @@ const SETTINGS = {
   model: 'sonnet',
   permissions: 'bypass_permissions',
   agentSetupId: 'best-practice',
+  effort: 'high',
 };
 
 /** Recording deps for the pure-flow tests; intent injected per scenario. */
@@ -815,6 +816,27 @@ describe('ProjectCreationOverlay in the home composer', () => {
     expect(screen.getByTestId('project-creation-framework')).toHaveTextContent(/Workspace/);
     expect(screen.queryByTestId('project-creation-name')).toBeNull();
     expect(screen.queryByTestId('project-creation-framework-icon')).toBeNull();
+  });
+
+  it('seeds the new chat with its own settings snapshot so the permission never reverts (issue #4)', async () => {
+    // The home composer's chosen permission is NOT the default — a fresh
+    // chat must open showing THIS value, not fall back to `bypass_permissions`.
+    act(() => {
+      useChatStore.setState({ newChatSettings: { ...SETTINGS, permissions: 'plan' } });
+    });
+
+    await mount();
+    fireEvent.changeText(screen.getByTestId('chat-composer-input'), 'make me a blog');
+    fireEvent.press(screen.getByTestId('chat-composer-send'));
+    await flushFlow();
+
+    expect(navigate).toHaveBeenCalledWith('chat-test-1');
+    // The chat now owns a local settings snapshot of its own — independent of
+    // the project's sticky "last mode selected there", which can be overwritten
+    // later by a DIFFERENT chat in the same project.
+    expect(useChatStore.getState().chatSettings['chat-test-1']).toMatchObject({
+      permissions: 'plan',
+    });
   });
 
   it('shows no creation overlay for an explicit existing-repo selection', async () => {

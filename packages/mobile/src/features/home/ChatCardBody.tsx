@@ -25,6 +25,7 @@ import {
   pruneAutopilotStopWord,
 } from './homeHelpers';
 import { LinkedIssueBadge } from './LinkedIssueBadge';
+import { useChatUnseen } from '../chat/useChatUnseen';
 import { Icon, useAppTheme } from '../../theme';
 
 export interface ChatCardBodyProps {
@@ -39,6 +40,10 @@ export interface ChatCardBodyProps {
 
 export function ChatCardBody({ chat, onOpenLinkedIssue }: ChatCardBodyProps) {
   const { theme } = useAppTheme();
+  // A chat that CHANGED but hasn't been opened on this device since gets an orange
+  // "unseen" dot (paired with the row's orange glow) — a clear, always-visible cue
+  // that survives the swipeable row's clip where the glow's shadow can't.
+  const unseen = useChatUnseen(chat);
 
   // Strip the injected autopilot instruction from the first-message preview before
   // using it as the card title. The backend normally returns the clean
@@ -66,6 +71,13 @@ export function ChatCardBody({ chat, onOpenLinkedIssue }: ChatCardBodyProps) {
   return (
     <>
       <View style={styles.titleRow}>
+        {unseen ? (
+          <View
+            testID={`chat-unseen-${chat.id}`}
+            accessibilityLabel="Unopened changes"
+            style={[styles.unseenDot, { backgroundColor: theme.colors.primary }]}
+          />
+        ) : null}
         {chat.pinned ? <Icon name="pin" size={12} color={theme.colors.primary} /> : null}
         <Text
           style={[
@@ -138,6 +150,7 @@ export function ChatCardBody({ chat, onOpenLinkedIssue }: ChatCardBodyProps) {
 
 const styles = StyleSheet.create({
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 5, minWidth: 0 },
+  unseenDot: { width: 8, height: 8, borderRadius: 4 },
   title: { fontSize: 14, fontWeight: '500', flexShrink: 1 },
   preview: { fontSize: 13 },
   metaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 },

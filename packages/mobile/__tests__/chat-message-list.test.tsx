@@ -1037,3 +1037,166 @@ describe('task-notification filtering', () => {
     expect(screen.getByTestId('chat-message-count')).toHaveTextContent(/^1$/);
   });
 });
+
+// ── File-edit grouping (consolidate Write/Edit/MultiEdit into one widget) ──
+//
+// A turn that touches many files (or edits one file repeatedly) used to render
+// one card per edit — a long, noisy vertical stack. `groupFileEditBlocks` gives
+// file edits the same "group by identity" treatment `groupBlocksByAgent` gives
+// sub-agent output: ALL of a scope's edit blocks fold into ONE `FileEditGroup`
+// card, robust to interleaving, while a single edit still renders inline.
+describe('file-edit grouping (consolidated "Files edited" widget)', () => {
+  const editUse = (id: string, filePath: string) =>
+    block({
+      type: 'tool_use',
+      id,
+      blockId: id,
+      toolName: 'Edit',
+      toolInput: { file_path: filePath, old_string: 'old', new_string: 'new' },
+    });
+  const writeUse = (id: string, filePath: string) =>
+    block({
+      type: 'tool_use',
+      id,
+      blockId: id,
+      toolName: 'Write',
+      toolInput: { file_path: filePath, content: 'hello' },
+    });
+
+  it('consolidates 3+ file edits into a single "Files edited" widget (not one card per edit)', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'm1',
+            role: 'assistant',
+            blocks: [
+              editUse('e1', '/repo/a.ts'),
+              editUse('e2', '/repo/b.ts'),
+              writeUse('e3', '/repo/c.ts'),
+            ],
+          },
+        ]}
+      />
+    );
+
+    // ONE consolidated widget, not three separate cards — collapsed by default.
+    expect(screen.getAllByTestId(/^file-edit-group-toggle-/)).toHaveLength(1);
+    expect(screen.queryByTestId('tool-block-edit')).toBeNull();
+    expect(screen.queryByTestId('tool-block-write')).toBeNull();
+    expect(screen.getByTestId('file-edit-group-count-e1')).toHaveTextContent('3');
+    // Collapsed still shows WHICH files changed (never hides the information).
+    expect(screen.getByTestId('file-edit-group-preview-e1')).toHaveTextContent(/a\.ts/);
+    expect(screen.getByTestId('file-edit-group-preview-e1')).toHaveTextContent(/b\.ts/);
+    expect(screen.getByTestId('file-edit-group-preview-e1')).toHaveTextContent(/c\.ts/);
+  });
+
+  it('expanding the group reveals each edit individually (file name + diff still inspectable)', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'm1',
+            role: 'assistant',
+            blocks: [editUse('e1', '/repo/a.ts'), editUse('e2', '/repo/b.ts')],
+          },
+        ]}
+      />
+    );
+
+    fireEvent.press(screen.getByTestId('file-edit-group-toggle-e1'));
+    const body = within(screen.getByTestId('file-edit-group-body-e1'));
+    // Both edits render via the real per-file EditBlock (native diff), each still
+    // its own independent collapsible.
+    expect(body.getAllByTestId('tool-block-edit')).toHaveLength(2);
+    const toggles = body.getAllByTestId('tool-block-edit-toggle');
+    expect(toggles).toHaveLength(2);
+
+    // Tapping one edit's own toggle reveals its diff (the detail survives the group).
+    fireEvent.press(toggles[0]);
+    expect(screen.getAllByTestId('diff-highlight').length).toBeGreaterThan(0);
+  });
+
+  it('is robust to interleaving: narration/other tool calls between edits still consolidate into ONE widget', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'm1',
+            role: 'assistant',
+            blocks: [
+              block({ type: 'text', blockId: 't1', content: 'Updating three files' }),
+              editUse('e1', '/repo/a.ts'),
+              block({ type: 'text', blockId: 't2', content: 'now the second' }),
+              block({
+                type: 'tool_use',
+                id: 'bash1',
+                blockId: 'bsh',
+                toolName: 'Bash',
+                toolInput: { command: 'ls' },
+              }),
+              editUse('e2', '/repo/b.ts'),
+              block({ type: 'text', blockId: 't3', content: 'and the third' }),
+              writeUse('e3', '/repo/c.ts'),
+            ],
+          },
+        ]}
+      />
+    );
+
+    // Exactly ONE group — interleaving folds into the same card, not three fragments.
+    expect(screen.getAllByTestId(/^file-edit-group-toggle-/)).toHaveLength(1);
+    // The narration + the unrelated Bash call stay INLINE, in their original order.
+    expect(screen.getByText('Updating three files')).toBeTruthy();
+    expect(screen.getByText('now the second')).toBeTruthy();
+    expect(screen.getByText('and the third')).toBeTruthy();
+    expect(screen.getByTestId('tool-block-bash')).toBeTruthy();
+
+    fireEvent.press(screen.getByTestId('file-edit-group-toggle-e1'));
+    expect(screen.getAllByTestId('tool-block-edit')).toHaveLength(2);
+    expect(screen.getByTestId('tool-block-write')).toBeTruthy();
+  });
+
+  it('a lone file edit renders inline with no group wrapper (only busy multi-edit turns consolidate)', () => {
+    render(
+      <MessageList
+        messages={[{ id: 'm1', role: 'assistant', blocks: [editUse('e1', '/repo/a.ts')] }]}
+      />
+    );
+
+    expect(screen.queryAllByTestId(/^file-edit-group-toggle-/)).toHaveLength(0);
+    expect(screen.getByTestId('tool-block-edit')).toBeTruthy();
+  });
+
+  it("composes with sub-agent grouping: a sub-agent's own multi-file edits consolidate inside its card", () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'm1',
+            role: 'assistant',
+            blocks: [
+              block({
+                type: 'tool_use',
+                id: 'task-1',
+                blockId: 'b',
+                toolName: 'Task',
+                toolInput: { subagent_type: 'qa-specialist' },
+              }),
+              block({ ...editUse('e1', '/repo/a.ts'), parent_tool_use_id: 'task-1' }),
+              block({ ...editUse('e2', '/repo/b.ts'), parent_tool_use_id: 'task-1' }),
+            ],
+          },
+        ]}
+        agentSetups={AGENT_SETUPS}
+      />
+    );
+
+    // No file-edit group at the top level (the main agent has no blocks of its
+    // own here) — the sub-agent's card owns it, collapsed with the rest.
+    expect(screen.queryAllByTestId(/^file-edit-group-toggle-/)).toHaveLength(0);
+    fireEvent.press(screen.getByTestId('agent-toggle-task-1'));
+    const body = within(screen.getByTestId('agent-body-task-1'));
+    expect(body.getAllByTestId(/^file-edit-group-toggle-/)).toHaveLength(1);
+  });
+});

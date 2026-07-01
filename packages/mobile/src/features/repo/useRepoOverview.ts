@@ -153,7 +153,7 @@ export function useRepoOverview(
       if (!socket) return;
       startingRef.current = true;
       try {
-        await startRepoChatFlow({
+        const chatId = await startRepoChatFlow({
           owner,
           repo,
           settings,
@@ -163,6 +163,10 @@ export function useRepoOverview(
           navigate: (chatId) => navigate(`/chat/${chatId}`),
           makeChatId,
         });
+        // Seed the chat's OWN local settings snapshot (issue #4 — a chat must
+        // keep the permission it was created with, never the project's mutable
+        // "last mode selected there").
+        useChatStore.getState().updateChatSettings(chatId, settings);
         // A failure PROPAGATES (no swallow) so `startWork` rejects and the
         // "Work on…" input restores the cleared text; `runQuickAction` swallows
         // its own (a pill has no input text to restore).

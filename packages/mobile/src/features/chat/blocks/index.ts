@@ -12,6 +12,14 @@ export {
   type BlockRendererProps,
 } from './BlockRenderer';
 export { renderMessageBlocks } from './renderMessageBlocks';
+export { renderConsolidatedBlocks } from './renderConsolidatedBlocks';
+export {
+  groupFileEditBlocks,
+  isFileEditToolUse,
+  FILE_EDIT_TOOL_NAMES,
+  type FileEditSegment,
+} from './groupFileEditBlocks';
+export { FileEditGroup, type FileEditGroupProps } from './FileEditGroup';
 export { TextBlock } from './TextBlock';
 export {
   parseInlineComponents,
@@ -26,7 +34,7 @@ export {
   type InlineGitHubWorkflowProps,
 } from './InlineGitHubComponents';
 export { BashBlock, BashOutputBlock, type ToolBlockProps } from './BashBlock';
-export { ReadBlock, WriteBlock, EditBlock } from './FileBlocks';
+export { ReadBlock, WriteBlock, EditBlock, MultiEditBlock } from './FileBlocks';
 export { GrepBlock, GlobBlock } from './SearchBlocks';
 export { ImageBlock, VideoBlock } from './MediaBlocks';
 export {

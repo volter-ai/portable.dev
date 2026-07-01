@@ -450,6 +450,15 @@ keep accumulating and the listeners survive a recovery re-point.
   per sub-agent, accumulating all its non-contiguous blocks). The spawning `Task` tool_use is
   folded into the card header (`subagent_type` → name, `description` → "what it's doing"). Name/color
   resolve via `getAgentInfo(agentType, agentSetups)`.
+- **`groupFileEditBlocks`** (`blocks/`) gives `Write`/`Edit`/`MultiEdit` tool blocks the same
+  identity-based treatment: 2+ file-edit blocks in a scope (main agent OR a single sub-agent's own
+  blocks — it runs on whatever `renderMessageBlocks` is handed, so it composes with the sub-agent
+  grouping above rather than reworking it) fold into ONE persistent `FileEditGroup` card, robust to
+  narration/other tool calls interleaved between edits; a lone edit still renders inline (no
+  wrapper). `FileEditGroup`'s expanded body reuses `renderConsolidatedBlocks` (the same
+  consolidate-tool_use-with-its-tool_result step, factored out of `renderMessageBlocks` into its own
+  module to avoid an import cycle) so each edit is still its own independently-expandable
+  `EditBlock`/`WriteBlock`/`MultiEditBlock`.
 - **`useChatStream(socket, chatId)`** joins the room (gated on `useSocketStore.connected`) and
   hydrates history from the `chat:join` ack **through `transformBufferedMessages`** (the ack carries
   raw `BufferedMessage`s, not chat messages — storing them directly renders an empty chat). It
@@ -477,7 +486,8 @@ keep accumulating and the listeners survive a recovery re-point.
   unknown NON-tool type renders the visible `FallbackBlock` (names the type, **never raw JSON**).
   `BLOCK_COVERAGE` is the exported checklist tested for no-fallback. Code renders via the
   self-contained native `CodeHighlight` (lexer → colored `<Text>`, no webview); Edit via
-  `DiffHighlight`. **Any test importing the chat blocks / `MessageList` MUST
+  `DiffHighlight`; MultiEdit (`MultiEditBlock`) renders one `DiffHighlight` per sub-edit under a
+  single file header. **Any test importing the chat blocks / `MessageList` MUST
   `jest.mock('react-native-markdown-display', …)`.**
 - **Media over the relay** — a screenshot/video arrives as an `image`/`video` block with a relative
   PC path (`/data/media/...` public, or `/api/video/...` behind the JWT). `resolveAuthedMediaSource`
