@@ -61,6 +61,13 @@ export type ChatOrigin =
       repoFullName: string;
       /** The discovered chat's title. */
       title: string;
+      /**
+       * Epoch ms of the transcript's last message (falls back to file mtime).
+       * rev12 D56/D57: the adopt-vs-fork freshness guard — a transcript hot
+       * within the guard window may belong to a live terminal session Portable
+       * has no hook evidence for (started while Portable was off) → fork.
+       */
+      lastUpdated: number;
     }
   | { origin: 'none' };
 

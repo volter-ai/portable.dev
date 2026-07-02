@@ -25,6 +25,7 @@ import {
   pruneAutopilotStopWord,
 } from './homeHelpers';
 import { LinkedIssueBadge } from './LinkedIssueBadge';
+import { RunningOnPcBadge } from '../chat/RunningOnPcBadge';
 import { useChatUnseen } from '../chat/useChatUnseen';
 import { Icon, useAppTheme } from '../../theme';
 
@@ -100,6 +101,10 @@ export function ChatCardBody({ chat, onOpenLinkedIssue }: ChatCardBodyProps) {
       {chat.linkedIssue ? (
         <LinkedIssueBadge linkedIssue={chat.linkedIssue} onPress={onOpenLinkedIssue} />
       ) : null}
+
+      {/* rev12 cross-surface presence: this chat's session is live in a
+          terminal on the PC (renders nothing otherwise). */}
+      <RunningOnPcBadge chatId={chat.id} />
 
       <View style={styles.metaRow}>
         <View style={styles.repoTag}>

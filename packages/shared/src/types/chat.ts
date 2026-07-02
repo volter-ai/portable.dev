@@ -307,6 +307,10 @@ export interface StoredChat {
   pinned: number; // SQLite boolean (0 or 1) — pinned to the top of lists
   last_updated: number;
   repo_path?: string | null;
+  /** GitHub full_name (owner/repo) for the chat's repo, when known — drives the repo icon/label in lists. */
+  repo_full_name?: string | null;
+  /** CamelCase alias of `repo_full_name` added by the DB transformer (`transformChatFromDb`). */
+  repoFullName?: string | null;
   session_id?: string | null;
   /**
    * Original Claude Code session id this chat was forked from (fork-on-first-write).

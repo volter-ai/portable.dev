@@ -1,5 +1,6 @@
-import { shouldLog } from '@vgit2/shared/constants';
+import { getUserWorkspaceDir, shouldLog } from '@vgit2/shared/constants';
 import { DEFAULT_MODEL_MODE } from '@vgit2/shared/models';
+import { getRepoFromPath } from '@vgit2/shared/utils/pathHelpers';
 import { Router } from 'express';
 
 import { FEATURE_FLAGS } from '../../config/featureFlags.js';
@@ -103,7 +104,18 @@ export function createChatRoutes(
       // message previews/counts. The terminal doesn't render previews, and reading the
       // (potentially large) JSONL transcript per chat on every poll is the slow part.
       if (req.query.previews === 'false') {
-        const page = allChats.slice(offset, offset + limit);
+        // Same repoFullName fallback as the full path below: legacy rows persisted
+        // without `repo_full_name` resolve it from `repo_path` server-side.
+        const page = allChats.slice(offset, offset + limit).map((chat) => ({
+          ...chat,
+          repoFullName:
+            chat.repoFullName ??
+            getRepoFromPath(
+              chat.repo_path ?? undefined,
+              getUserWorkspaceDir(req.session.userEmail!)
+            ) ??
+            undefined,
+        }));
         return res.json({ chats: page, hasMore, totalCount });
       }
 
@@ -221,7 +233,18 @@ export function createChatRoutes(
             pinned: Boolean(chat.pinned),
             lastUpdated: chat.last_updated,
             repo_path: chat.repo_path,
-            repoFullName: chat.repoFullName ?? chat.repo_full_name ?? undefined, // GitHub owner/repo so the client shows the repo name, not a generic "Workspace" label
+            // GitHub owner/repo so the client shows the repo name + owner avatar, not a
+            // generic "Workspace" label. Rows persisted before `chat:create` stored
+            // `repo_full_name` (and discovered/forked rows that carry it natively) use the
+            // stored value; legacy rows fall back to a SERVER-side parse of `repo_path`
+            // against the real workspace root — the mobile client cannot do this parse
+            // itself (Windows backslash paths + the two-level layout don't match its
+            // legacy `claude-workspace/{email}/{owner}/{repo}` anchor).
+            repoFullName:
+              chat.repoFullName ??
+              chat.repo_full_name ??
+              getRepoFromPath(chat.repo_path, getUserWorkspaceDir(req.session.userEmail!)) ??
+              undefined,
             playwrightDevice: (chat.playwright_device as 'mobile' | 'desktop') || 'mobile',
             lastReadMessageId: chat.last_read_message_id || undefined,
             totalCount,

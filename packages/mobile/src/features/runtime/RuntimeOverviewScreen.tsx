@@ -289,7 +289,10 @@ export function RuntimeOverviewScreen({
                 session={s}
                 testID={`runtime-claude-session-${s.chatId}`}
                 killing={killing.has(s.chatId)}
-                onKill={() => void onKillSession(s.chatId)}
+                // rev12: a TERMINAL session (the user's own `claude` in a PC
+                // terminal) is not killable via chat:kill-session — the api
+                // doesn't own that subprocess. Stop-on-PC ships in F3.
+                onKill={s.origin === 'terminal' ? undefined : () => void onKillSession(s.chatId)}
               />
             ))
           )}

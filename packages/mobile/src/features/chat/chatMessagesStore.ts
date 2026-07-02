@@ -11,8 +11,9 @@
  * outgoing-message queue is a different concern.)
  */
 
-import type { ChatStatus, UploadedFile } from '@vgit2/shared/types';
+import type { BufferedMessage, ChatStatus, UploadedFile } from '@vgit2/shared/types';
 import type { ClaudeStreamBlock } from '@vgit2/shared/socket';
+import { stripAutopilotCompletionInstruction } from '@vgit2/shared/utils/autopilotHelpers';
 import { create } from 'zustand';
 
 /** A single message in the RN chat list (blocks carry the wire `parent_tool_use_id`). */
@@ -237,6 +238,15 @@ export interface ChatMessagesState {
   appendBlock: (chatId: string, block: ClaudeStreamBlock) => void;
   /** Append / reconcile a user message (`user_message`, replaces an optimistic echo). */
   appendUserMessage: (chatId: string, message: MobileChatMessage) => void;
+  /**
+   * rev12 D62 mid-turn live-follow: fold a `chat:external_messages` batch —
+   * newly-persisted TERMINAL transcript rows in the `chat:join` wire shape —
+   * through the SAME reducers as the live stream (`appendUserMessage` /
+   * `appendBlock`), so a terminal turn renders exactly like a local run while
+   * it happens. BlockId/id dedup makes a redelivered batch (or the overlap
+   * with the final Stop-hook re-join snapshot) idempotent.
+   */
+  applyExternalMessages: (chatId: string, rows: BufferedMessage[]) => void;
   /** Set run status (`claude:status` / `claude:processing`). */
   setStatus: (chatId: string, status: ChatStatus) => void;
   /**
@@ -353,6 +363,38 @@ export const useChatMessagesStore = create<ChatMessagesState>()((set, get) => ({
       }
       return { messages: { ...state.messages, [chatId]: [...current, message] } };
     }),
+
+  applyExternalMessages: (chatId, rows) => {
+    const { appendUserMessage, appendBlock } = get();
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue;
+      const data = (row as { data?: unknown }).data as
+        | { content?: unknown; customDisplay?: { displayText?: unknown }; timestamp?: unknown }
+        | undefined;
+      if (row.type === 'user_message') {
+        // Prefer the user-visible customDisplay text (adopted-chat overlay rows),
+        // else the raw content — mirroring `transformBufferedMessages`. The strip
+        // is a no-op for plain terminal prompts.
+        const display =
+          typeof data?.customDisplay?.displayText === 'string'
+            ? data.customDisplay.displayText
+            : typeof data?.content === 'string'
+              ? data.content
+              : '';
+        if (!display) continue;
+        appendUserMessage(chatId, {
+          role: 'user',
+          id: row.id !== undefined ? String(row.id) : undefined,
+          content: stripAutopilotCompletionInstruction(display),
+          timestamp: row.timestamp,
+        });
+      } else if (row.type === 'claude_code_block' && data && typeof data === 'object') {
+        const block = data as ClaudeStreamBlock;
+        appendBlock(chatId, { ...block, timestamp: block.timestamp ?? row.timestamp });
+      }
+      // Unknown row types are skipped (forward-compatible with new transcript rows).
+    }
+  },
 
   setStatus: (chatId, status) =>
     set((state) => ({

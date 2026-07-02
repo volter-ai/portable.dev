@@ -424,14 +424,22 @@ describe('ChatExecutionService - Handler Tests', () => {
           expect(result.chat!.title).toBe('My New Feature Chat');
         }
         expect(result.chat!.status).toBe('completed');
-        expect(result.chat!.repo_path).toContain('testowner/testrepo');
+        // Normalize separators — on Windows the resolved repo_path uses backslashes.
+        expect(result.chat!.repo_path.replace(/\\/g, '/')).toContain('testowner/testrepo');
+        // The GitHub full name rides the broadcast payload so clients can render
+        // the owner avatar without parsing the (possibly unparseable) disk path.
+        expect(result.chat!.repoFullName).toBe('testowner/testrepo');
 
         /**
-         * ASSERTION: Chat persisted to database
+         * ASSERTION: Chat persisted to database — including `repo_full_name`, which
+         * drives the chat card's repo icon in the mobile list (regression: chats
+         * created via chat:create rendered with no icon because only
+         * discovered/forked chats persisted it).
          */
         const savedChat = await chatService.getChat(newChatId, testUserId, authToken);
         if (savedChat) {
           expect(savedChat.title).toBe('My New Feature Chat');
+          expect(savedChat.repoFullName).toBe('testowner/testrepo');
         }
       } else {
         // In CI, chat creation may fail - verify no crash

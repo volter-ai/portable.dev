@@ -35,6 +35,8 @@ import { SqliteDbAdapter } from './db/SqliteDbAdapter/index.js';
 import { createJwtAuthMiddleware } from './middleware/jwtAuth.js';
 import { createApiRoutes } from './routes/api.routes.js';
 import { createAuthRoutes } from './routes/auth.routes.js';
+import { createInternalRoutes } from './routes/subroutes/internal.routes.js';
+import { createStopOnPcRoutes } from './routes/subroutes/stop-on-pc.routes.js';
 import { createTunnelApiRoutes } from './routes/subroutes/tunnel-api.routes.js';
 import { createTunnelRoutes } from './routes/tunnel.routes.js';
 
@@ -46,6 +48,7 @@ import { ChatService } from './services/ChatService.js';
 import { ClaudeService } from './services/ClaudeService.js';
 import { ConnectionsService } from './services/ConnectionsService.js';
 import { DeviceTokenService } from './services/DeviceTokenService.js';
+import { ExternalTranscriptFollowerService } from './services/ExternalTranscriptFollowerService.js';
 import { GitHubApiService } from './services/GitHubApiService.js';
 import { GitLocalService } from './services/GitLocalService.js';
 import { HandshakeVerificationGate } from './services/HandshakeVerificationGate.js';
@@ -160,6 +163,14 @@ class Server {
 
   private sessionReaperService?: import('./services/SessionReaperService.js').SessionReaperService;
   private hostMetricsService?: import('./services/HostMetricsService.js').HostMetricsService;
+  // rev12: presence registry for TERMINAL `claude` sessions (hook-relay ingest).
+  private externalClaudeSessionService?: import('./services/ExternalClaudeSessionService.js').ExternalClaudeSessionService;
+  // rev12: mcp-sidecar channel (register + long-poll; Stop-on-PC delivery).
+  private sidecarChannelService?: import('./services/SidecarChannelService.js').SidecarChannelService;
+  // rev12: Stop-on-PC orchestration (deliver + wait for evidence).
+  private stopOnPcService?: import('./services/StopOnPcService.js').StopOnPcService;
+  // rev12 D62: mid-turn live-follow of terminal transcripts (push rows to the room).
+  private externalTranscriptFollower?: import('./services/ExternalTranscriptFollowerService.js').ExternalTranscriptFollowerService;
 
   constructor() {
     debugLog('Initializing Express...');
@@ -562,13 +573,37 @@ class Server {
     const { StorageService } = await import('./services/StorageService.js');
     this.storageService = new StorageService();
 
+    // rev12: presence registry for TERMINAL `claude` sessions. Fed by the
+    // launcher-installed global lifecycle hooks via /api/internal/claude-hook;
+    // consumed by the runtime-state fold (presence badge) and the
+    // adopt-vs-fork gate. Best-effort: a failed init only disables presence.
+    try {
+      const { ExternalClaudeSessionService } =
+        await import('./services/ExternalClaudeSessionService.js');
+      this.externalClaudeSessionService = new ExternalClaudeSessionService();
+      this.externalClaudeSessionService.initialize();
+      const { SidecarChannelService } = await import('./services/SidecarChannelService.js');
+      this.sidecarChannelService = new SidecarChannelService(this.externalClaudeSessionService);
+      const { StopOnPcService } = await import('./services/StopOnPcService.js');
+      this.stopOnPcService = new StopOnPcService(
+        this.externalClaudeSessionService,
+        this.sidecarChannelService
+      );
+    } catch (error) {
+      console.error('[Server] ExternalClaudeSessionService init failed (presence off):', error);
+      this.externalClaudeSessionService = undefined;
+      this.sidecarChannelService = undefined;
+      this.stopOnPcService = undefined;
+    }
+
     // Initialize RuntimeStateService (runtime state collection and broadcasting)
     const { RuntimeStateService } = await import('./services/RuntimeStateService.js');
     const runtimeStateService = new RuntimeStateService(
       this.tunnelService,
       this.processTrackerService,
       undefined, // runtimeStateFormatter
-      this.claudeService // live Claude sessions in the runtime panel
+      this.claudeService, // live Claude sessions in the runtime panel
+      this.externalClaudeSessionService // rev12: terminal-session presence
     );
 
     // outdated-build block kill switch: fetches the gateway's
@@ -590,7 +625,9 @@ class Server {
       this.sopService,
       this.claudeCodeSessions, // Session map
       reposCacheService, // ReposCacheService for cache invalidation
-      this.handshakeVerificationGate // outdated-build block kill switch
+      this.handshakeVerificationGate, // outdated-build block kill switch
+      this.externalClaudeSessionService, // rev12: adopt-vs-fork gate
+      this.stopOnPcService // rev12 D63: stop-on-send (interactive send ends the terminal session)
     );
 
     // Wire up circular dependency: ClaudeService needs ChatExecutionService for create_chat tool
@@ -737,6 +774,54 @@ class Server {
     });
     debugLog(`[Server] Media files will be served per-user from: ${MEDIA_DIR}`);
 
+    // rev12 internal loopback surface (hook-relay / mcp-sidecar ingest). MUST be
+    // mounted BEFORE the JWT middleware: the claude-spawned relays carry no JWT —
+    // they are gated by the per-boot internal secret instead (fail closed when
+    // PORTABLE_HOOK_SECRET is unset). Registered first so Express matches it
+    // before the '/api' JWT gate below.
+    if (this.externalClaudeSessionService) {
+      // rev12 D62: mid-turn live-follow — while a terminal turn runs AND the
+      // chat room has members, tail the transcript and push new rows to the
+      // room so the phone sees the work as it happens (PRD §10).
+      const externalSessions = this.externalClaudeSessionService;
+      const follower = new ExternalTranscriptFollowerService({
+        getSession: (sessionId) => {
+          const session = externalSessions.getSession(sessionId);
+          return session ? { state: session.state, transcriptPath: session.transcriptPath } : null;
+        },
+        getMessages: (chatId) => this.chatService.getMessages(chatId),
+        broadcastToRoom: (room, event, payload) =>
+          this.socketIOService?.broadcastToRoom(room, event, payload),
+        roomHasMembers: (room) => this.socketIOService?.roomHasMembers(room) ?? false,
+      });
+      this.externalTranscriptFollower = follower;
+      if (this.socketIOService) {
+        this.socketIOService.onChatJoined = (chatId) => void follower.onChatJoined(chatId);
+      }
+
+      this.app.use(
+        '/api/internal',
+        createInternalRoutes(this.externalClaudeSessionService, {
+          onSessionsChanged: () => this.socketIOService?.broadcastRuntimeStateToAllUsers(),
+          // A completed TERMINAL turn (the Stop hook) means the transcript JSONL
+          // just gained a whole turn — tell clients so an open discovered chat
+          // refreshes its messages (rev12 D55).
+          onHookEvent: (event) => {
+            // D62: UserPromptSubmit starts the live-follow; the end hooks stop it.
+            void follower.onHookEvent(event);
+            const name = typeof event.hook_event_name === 'string' ? event.hook_event_name : '';
+            const sessionId = typeof event.session_id === 'string' ? event.session_id : '';
+            if ((name === 'Stop' || name === 'StopFailure') && sessionId) {
+              this.socketIOService?.emitToAllUsers('chat:external_turn_completed', {
+                chatId: sessionId,
+              });
+            }
+          },
+          sidecarChannel: this.sidecarChannelService,
+        })
+      );
+    }
+
     // JWT authentication middleware for API and Auth routes
     // Validates Authorization: Bearer <token> header and implements sliding expiration
     // Local-first: pass the DeviceTokenService so the device token —
@@ -756,6 +841,13 @@ class Server {
         this.gitLocalService
       )
     );
+
+    // rev12 Stop-on-PC (authed — the mobile app is the caller). Mounted before
+    // the broad API router so its specific `/chat/:sessionId/stop-on-pc` path
+    // resolves cleanly.
+    if (this.stopOnPcService) {
+      this.app.use('/api', createStopOnPcRoutes(this.stopOnPcService));
+    }
 
     // API routes (also has /api/health for compatibility)
     this.app.use(
@@ -1107,6 +1199,13 @@ class Server {
         } catch (error) {
           console.error('[Server] Error stopping host metrics service:', error);
         }
+      }
+
+      // Stop the transcript follower (clears its watchers + poll intervals)
+      try {
+        this.externalTranscriptFollower?.unfollowAll();
+      } catch (error) {
+        console.error('[Server] Error stopping transcript follower:', error);
       }
 
       // Close Socket.IO connections

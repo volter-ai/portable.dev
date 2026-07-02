@@ -67,6 +67,16 @@ export interface ProcessData {
  */
 export type ClaudeSessionStatus = 'running' | 'idle' | 'waiting';
 
+/**
+ * Where a live Claude session runs (rev12 cross-surface presence):
+ * - `portable` — spawned by the Portable api (the Agent SDK subprocess).
+ * - `terminal` — the user's own terminal `claude` on the PC, observed via the
+ *   launcher-installed lifecycle hooks. For these, `chatId` is the Claude Code
+ *   SESSION id — which is also the discovered chat's id, so clients join the
+ *   presence badge to a chat row by plain id equality.
+ */
+export type ClaudeSessionOrigin = 'portable' | 'terminal';
+
 /** One live Claude session as it appears on the `user:runtime_state` wire. */
 export interface RuntimeClaudeSessionPayload {
   /** Owning chat id (also the resume key). */
@@ -82,6 +92,22 @@ export interface RuntimeClaudeSessionPayload {
   idleMs: number;
   /** True when the session has a `session_id` and can be transparently resumed. */
   resumable: boolean;
+  /**
+   * Session origin (rev12). Absent on older payloads — treat as `portable`
+   * (the pre-rev12 wire only ever carried api-spawned sessions).
+   */
+  origin?: ClaudeSessionOrigin;
+}
+
+/**
+ * A command delivered over the mcp-sidecar channel (rev12 D58/D59) — the api
+ * pushes it to the `portable mcp-sidecar` child of a terminal `claude`
+ * session; the sidecar signals its parent CLI.
+ */
+export interface SidecarCommand {
+  command: 'stop';
+  /** `interrupt` (SIGINT, ≈ Ctrl+C) or `end` (SIGTERM). */
+  mode: 'interrupt' | 'end';
 }
 
 // ============================================================================

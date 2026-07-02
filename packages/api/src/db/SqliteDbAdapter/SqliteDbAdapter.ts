@@ -514,6 +514,7 @@ export class SqliteDbAdapter implements DbAdapter {
           repoPath: d.repoPath,
           repoFullName: d.repoFullName,
           title: d.title,
+          lastUpdated: d.lastUpdated,
         };
       }
     }

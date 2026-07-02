@@ -468,4 +468,4 @@ infrastructure you control, run your **own** gateway and point your PC and app a
 
 ## License
 
-MIT
+Apache-2.0

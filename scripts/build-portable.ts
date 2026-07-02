@@ -145,7 +145,7 @@ async function main(): Promise<void> {
     version: rootPkg.version ?? '0.1.0',
     type: 'module',
     description: 'Portable — local-first launcher / tunnel-router (installable CLI)',
-    license: 'MIT',
+    license: 'Apache-2.0',
     repository: { type: 'git', url: 'git+https://github.com/volter-ai/portable.dev.git' },
     homepage: 'https://github.com/volter-ai/portable.dev#readme',
     // Bare path (NOT './cli.js'): npm strips a leading './' and warns

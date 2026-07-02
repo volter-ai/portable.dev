@@ -108,6 +108,7 @@ export class JsonDbAdapter implements DbAdapter {
       title,
       status,
       repoPath,
+      repoFullName,
       sessionId,
       systemPrompt,
       playwrightDevice,
@@ -134,6 +135,10 @@ export class JsonDbAdapter implements DbAdapter {
         archived: false,
         last_updated: now,
         repo_path: repoPath ?? null,
+        // GitHub owner/repo — drives the mobile chat card's repo icon; preserve an
+        // existing value when the caller doesn't pass one (same as summary/model).
+        repo_full_name:
+          repoFullName !== undefined ? repoFullName : (existing?.repo_full_name ?? null),
         session_id: sessionId ?? null,
         system_prompt: systemPrompt ?? null,
         playwright_device:

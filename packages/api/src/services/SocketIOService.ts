@@ -277,6 +277,38 @@ export class SocketIOService {
   }
 
   /**
+   * Broadcast the runtime snapshot to EVERY connected user (rev12). Used by
+   * sources that have no user context — the external terminal-session registry
+   * ingests hook events that belong to the PC, not to a socket identity; on a
+   * single-user PC this reaches exactly the owner. No connected sockets → no-op.
+   */
+  public broadcastRuntimeStateToAllUsers(): void {
+    for (const userId of this.getConnectedUserIds()) {
+      this.broadcastRuntimeStateToUser(userId);
+    }
+  }
+
+  /**
+   * Emit an event to EVERY connected user (rev12) — for PC-scoped signals with
+   * no user context (terminal-session hooks). Single-user PC ⇒ the owner.
+   */
+  public emitToAllUsers(event: string, data: any): void {
+    for (const userId of this.getConnectedUserIds()) {
+      this.emitToUser(userId, event, data);
+    }
+  }
+
+  /** Unique userEmails across the currently-connected sockets. */
+  private getConnectedUserIds(): Set<string> {
+    const userIds = new Set<string>();
+    for (const socket of this.io.sockets.sockets.values()) {
+      const userEmail = (socket.data as { userEmail?: string } | undefined)?.userEmail;
+      if (userEmail) userIds.add(userEmail);
+    }
+    return userIds;
+  }
+
+  /**
    * Broadcast FULL runtime state to all user's connected sockets
    * Sends complete snapshot - no deltas, always full state
    */
@@ -347,6 +379,15 @@ export class SocketIOService {
       try {
         // Join Socket.IO room
         socket.join(chatId);
+
+        // rev12 D62: let the transcript follower start mid-turn live-follow
+        // when the joined chat's terminal session is running. Must never
+        // break the join path.
+        try {
+          this.onChatJoined?.(chatId);
+        } catch (tapError) {
+          console.error('[SocketIO] onChatJoined tap failed:', tapError);
+        }
 
         // Build execution context
         const context = this.buildExecutionContext(socket, chatId);
@@ -771,6 +812,21 @@ export class SocketIOService {
    */
   public broadcastToRoom(chatId: string, event: string, data: any) {
     this.io.to(chatId).emit(event, data);
+  }
+
+  /**
+   * rev12 D62: optional tap fired after a socket joins a chat room via
+   * `chat:join` — wired by server.ts to the transcript follower so opening a
+   * chat mid-terminal-turn starts the live-follow.
+   */
+  public onChatJoined?: (chatId: string) => void;
+
+  /**
+   * True when at least one socket is in the chat's room (rooms are cleaned up
+   * on disconnect — membership ≈ "opened this chat during this connection").
+   */
+  public roomHasMembers(chatId: string): boolean {
+    return (this.io.sockets.adapter.rooms.get(chatId)?.size ?? 0) > 0;
   }
 
   /**

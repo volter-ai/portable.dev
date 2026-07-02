@@ -69,4 +69,77 @@ describe('RuntimeStateService', () => {
       expect(await svc.hasActiveRuntimeState('user@example.com')).toBe(true);
     });
   });
+
+  describe('terminal-session fold (rev12 D55)', () => {
+    const apiSession = {
+      chatId: 'chat-1',
+      repoPath: '/repo',
+      status: 'running',
+      isProcessing: true,
+      lastActivityAt: 100,
+      idleMs: 0,
+      resumable: true,
+    };
+    const externalRows = [
+      {
+        sessionId: 'sess-terminal',
+        transcriptPath: '/t.jsonl',
+        cwd: '/repo2',
+        pid: 5,
+        pidConfirmed: true,
+        state: 'live-running',
+        updatedAt: 200,
+      },
+    ];
+
+    const build = (apiSessions: any[], liveRows: any[]) =>
+      new RuntimeStateService(
+        { getUserTunnels: () => [] } as any,
+        { getAllProcesses: () => [], getCachedOutput: () => undefined } as any,
+        undefined as any,
+        { getClaudeSessionInfos: () => apiSessions } as any,
+        { getLiveSessions: () => liveRows } as any
+      );
+
+    it('folds terminal sessions in with origin:"terminal" and chatId = session id', async () => {
+      const svc = build([apiSession], externalRows);
+      const snapshot = await svc.getRuntimeStateForBroadcast('user@example.com');
+
+      expect(snapshot.claudeSessions).toHaveLength(2);
+      const [api, terminal] = snapshot.claudeSessions;
+      expect(api.origin).toBe('portable');
+      expect(terminal).toMatchObject({
+        chatId: 'sess-terminal',
+        repoPath: '/repo2',
+        status: 'running',
+        isProcessing: true,
+        resumable: true,
+        origin: 'terminal',
+      });
+    });
+
+    it('a live-idle terminal session surfaces as idle with a real idleMs', async () => {
+      const svc = build([], [{ ...externalRows[0], state: 'live-idle' }]);
+      const snapshot = await svc.getRuntimeStateForBroadcast('user@example.com');
+      expect(snapshot.claudeSessions).toHaveLength(1);
+      expect(snapshot.claudeSessions[0].status).toBe('idle');
+      expect(snapshot.claudeSessions[0].isProcessing).toBe(false);
+      expect(snapshot.claudeSessions[0].idleMs).toBeGreaterThan(0);
+    });
+
+    it('drops a terminal session whose id collides with an api-spawned chat (adopted chat)', async () => {
+      const svc = build(
+        [{ ...apiSession, chatId: 'sess-terminal' }],
+        externalRows // same id — the api is running the adopted session
+      );
+      const snapshot = await svc.getRuntimeStateForBroadcast('user@example.com');
+      expect(snapshot.claudeSessions).toHaveLength(1);
+      expect(snapshot.claudeSessions[0].origin).toBe('portable');
+    });
+
+    it('terminal sessions alone make the runtime state active', async () => {
+      const svc = build([], externalRows);
+      expect(await svc.hasActiveRuntimeState('user@example.com')).toBe(true);
+    });
+  });
 });

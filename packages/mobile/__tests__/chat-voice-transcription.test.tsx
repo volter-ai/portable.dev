@@ -383,6 +383,99 @@ describe('useNativeDictation — ViewModel', () => {
     expect(onTranscription).toHaveBeenCalledWith('first sentence. and more');
   });
 
+  it('absorbs a late final that is cumulative over MULTIPLE committed segments', async () => {
+    // The real doubling trace (Samsung `dictation`): partials RESET at pauses (committing
+    // chunks along the way), then the engine delivers a late final that is CUMULATIVE over
+    // the WHOLE session — re-stating SEVERAL committed segments, not just the last one. The
+    // old guard compared only the LAST segment, so the multi-segment echo appended and the
+    // entire block rendered/inserted twice.
+    const { recognizer, emit, endUtterance } = fakeRecognizer();
+    const onTranscription = jest.fn();
+    const { result } = renderHook(() => useNativeDictation({ recognizer, onTranscription }));
+
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => {
+      emit('hello there', false); // chunk 1 grows…
+      emit('general kenobi', false); // ← reset → commit 'hello there'
+    });
+    act(() => endUtterance()); // pause → commit 'general kenobi', pending empty
+    // Late final = the WHOLE session so far (spans BOTH committed segments).
+    act(() => emit('hello there general kenobi', true));
+    expect(result.current.liveText).toBe('hello there general kenobi'); // shown ONCE
+    act(() => emit('second sentence.', true));
+    await act(async () => {
+      await result.current.stop();
+    });
+
+    expect(onTranscription).toHaveBeenCalledWith('hello there general kenobi second sentence.');
+  });
+
+  it('absorbs a cumulative echo whose committed tail was cut MID-WORD by the flush', async () => {
+    // The flush can commit a partial truncated mid-word ("…the text evalu"); the late final
+    // then completes it ("…the text evaluates"). A word-boundary-only comparison misses the
+    // restatement and the phrase doubles.
+    const { recognizer, emit, endUtterance } = fakeRecognizer();
+    const onTranscription = jest.fn();
+    const { result } = renderHook(() => useNativeDictation({ recognizer, onTranscription }));
+
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => emit('when the text evalu', false)); // partial, cut mid-word
+    act(() => endUtterance()); // flush commits the truncated partial
+    act(() => emit('when the text evaluates, and continues', true)); // echo completes the word
+    await act(async () => {
+      await result.current.stop();
+    });
+
+    expect(onTranscription).toHaveBeenCalledWith('when the text evaluates, and continues');
+  });
+
+  it('absorbs a session-cumulative final while a pending chunk is still in progress', async () => {
+    // No `end` at all: partials reset (committing chunk 1), chunk 2 is still PENDING when the
+    // engine emits a final cumulative over the whole session (chunk 1 + chunk 2). The old guard
+    // only ran with `pending` empty, so the final appended and both chunks doubled.
+    const { recognizer, emit } = fakeRecognizer();
+    const onTranscription = jest.fn();
+    const { result } = renderHook(() => useNativeDictation({ recognizer, onTranscription }));
+
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => {
+      emit('certain segments repeat', false); // chunk 1 grows…
+      emit('at sentence breaks', false); // ← reset → commit 'certain segments repeat'
+      emit('certain segments repeat at sentence breaks', true); // cumulative final (spans both)
+    });
+    await act(async () => {
+      await result.current.stop();
+    });
+
+    expect(onTranscription).toHaveBeenCalledWith('certain segments repeat at sentence breaks');
+  });
+
+  it('does NOT treat a shared single-word prefix as an echo ("go" vs "google")', async () => {
+    // The truncation tolerance must stay word-boundary-safe for a SINGLE-word segment: a new
+    // utterance that begins with a longer word sharing the prefix is genuine new speech.
+    const { recognizer, emit, endUtterance } = fakeRecognizer();
+    const onTranscription = jest.fn();
+    const { result } = renderHook(() => useNativeDictation({ recognizer, onTranscription }));
+
+    await act(async () => {
+      await result.current.start();
+    });
+    act(() => emit('go', true));
+    act(() => endUtterance());
+    act(() => emit('google it', false));
+    await act(async () => {
+      await result.current.stop();
+    });
+
+    expect(onTranscription).toHaveBeenCalledWith('go google it');
+  });
+
   it('assembles multiple finalized utterances in order on stop', async () => {
     const { recognizer, emit } = fakeRecognizer();
     const onTranscription = jest.fn();

@@ -105,6 +105,11 @@ export function useChatStream(
   // by `useNativeSocket`'s tracked-room resync, so this only needs to land once.
   const connected = useSocketStore((s) => s.connected);
 
+  // rev12: a TERMINAL turn completed on the PC — see the dedicated refresh
+  // effect below. Kept OUT of the join effect's deps so an unrelated chat's
+  // turn never re-fires this chat's entry pagination-reset (N3).
+  const lastExternalTurn = useSocketStore((s) => s.lastExternalTurn);
+
   // Load-more pagination is per-SCREEN state (not in the message store): how many
   // messages we've requested (grows 50 → 100 …) + whether the backend has more.
   const [hasMore, setHasMore] = useState(false);
@@ -152,6 +157,38 @@ export function useChatStream(
       cancelled = true;
     };
   }, [socket, chatId, historyLimit, connected]);
+
+  // rev12 external-turn REFRESH — SEPARATE from the entry join above so it does
+  // NOT reset pagination (N3). When a TERMINAL turn completes for THIS chat, the
+  // transcript JSONL gained a whole turn that streamed nowhere; re-join at the
+  // CURRENT requested count (keeping `hasMore` / any loaded-earlier pages) and
+  // let `applyJoinedHistory` merge it in. Scoped to this chatId, so another
+  // chat's turn re-runs this effect but early-returns without work.
+  const handledExternalSeqRef = useRef(0);
+  useEffect(() => {
+    if (!socket || !chatId || !connected) return;
+    if (!lastExternalTurn || lastExternalTurn.chatId !== chatId) return;
+    if (lastExternalTurn.seq === handledExternalSeqRef.current) return;
+    handledExternalSeqRef.current = lastExternalTurn.seq;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const ack = (await socket.joinChat({ chatId, count: requestedCountRef.current })) as
+          | ChatJoinAck
+          | undefined;
+        if (cancelled || !ack?.messages) return;
+        useChatMessagesStore
+          .getState()
+          .applyJoinedHistory(chatId, transformBufferedMessages(ack.messages), ack.status);
+        if (typeof ack.hasMore === 'boolean') setHasMore(ack.hasMore);
+      } catch {
+        // Refresh is best-effort; keep the current view on failure.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [socket, chatId, connected, lastExternalTurn]);
 
   const markRead = useCallback(
     (messageId: number) => {

@@ -48,6 +48,13 @@ export interface MessageListProps {
   status?: ChatStatus;
   error?: string;
   isWorking?: boolean;
+  /**
+   * rev12 presence: a terminal turn is in flight on the PC. Nothing streams to
+   * the app during it (the transcript hydrates only when the turn completes),
+   * so the footer shows the working dots with a "Working locally..." line.
+   * The local run's indicator (`isWorking`) always takes precedence.
+   */
+  workingOnPc?: boolean;
   /** Agent setup id for the main-agent group label (per-chat setting). */
   agentSetupId?: string;
   /** Display name of the active agent ("Best Practice") for the working line. */
@@ -430,6 +437,7 @@ export function MessageList({
   status,
   error,
   isWorking,
+  workingOnPc,
   agentSetupId,
   agentName,
   agentColor,
@@ -586,6 +594,9 @@ export function MessageList({
   // shows while the run is active and the agent hasn't started an assistant
   // message yet; once one exists, the inline variant inside it takes over.
   const showStandaloneIndicator = !!isWorking && (!lastMessage || lastMessage.role === 'user');
+  // rev12 presence: a terminal turn streams nothing here, so it shows regardless
+  // of the last message's role; the local run's indicator always wins.
+  const showPcIndicator = !!workingOnPc && !isWorking;
 
   const renderItem = useCallback(
     ({ item, index }: { item: MobileChatMessage; index: number }) => (
@@ -630,6 +641,14 @@ export function MessageList({
     <View>
       {showStandaloneIndicator && (
         <TypingIndicator status={status} agentName={agentName} agentColor={agentColor} />
+      )}
+      {showPcIndicator && (
+        <TypingIndicator
+          inline
+          text="Working locally..."
+          agentColor={theme.colors.primary}
+          testID="working-on-pc-indicator"
+        />
       )}
       {status === 'completed' && !isWorking && (
         <View testID="chat-interrupted-marker" style={styles.hidden} />

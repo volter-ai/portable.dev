@@ -50,4 +50,4 @@ upstream — open an issue first to discuss.
 - TypeScript strict mode; follow the existing patterns in each package.
 - `eslint` + `prettier` are enforced (see the repo config). Run `bun run format` before pushing.
 
-By contributing, you agree that your contributions are licensed under the [MIT License](LICENSE).
+By contributing, you agree that your contributions are licensed under the [Apache License 2.0](LICENSE).

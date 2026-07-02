@@ -29,8 +29,11 @@ module.exports = {
     '^(\\.{1,2}/.*)\\.js$': '$1',
     // Babel externalises helpers to @babel/runtime, but when Jest transforms a
     // file in packages/shared the inserted require resolves from shared's dir,
-    // where Bun did not nest @babel/runtime. Pin it to this package's copy.
-    '^@babel/runtime/(.*)$': '<rootDir>/node_modules/@babel/runtime/$1',
+    // where Bun did not nest @babel/runtime. Pin it to the single copy Bun
+    // installed — hoisted to the repo root or nested here, depending on layout.
+    '^@babel/runtime/(.*)$': `${require('path').dirname(
+      require.resolve('@babel/runtime/package.json')
+    )}/$1`,
     // react-native-reanimated can't load under jest-expo (its real index inits
     // react-native-worklets native at module-load and throws). Map the bare
     // specifier to a hand-rolled plain-JS stub — the fallback for tests that do NOT

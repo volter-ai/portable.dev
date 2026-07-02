@@ -10,9 +10,11 @@
  * buffer with a trailing ellipsis; each FINALIZED utterance is appended. On stop the full
  * transcript (accumulated finals + the trailing interim) is assembled and inserted.
  *
- * A dedicated POST-FLUSH ECHO GUARD (`restatesSegment` in `handleResult`) absorbs the trailing
- * final / restart-partial that re-states a just-committed segment after an utterance-end flush —
- * without it, committed + pending render the phrase TWICE (the "doubled text" bug during pauses).
+ * A dedicated CUMULATIVE-ECHO GUARD (`findRestatedTailStart` in `handleResult`) absorbs the
+ * trailing final / restart-partial that re-states already-committed text — including a late
+ * final CUMULATIVE over the whole session, spanning SEVERAL committed segments (possibly with
+ * the flushed tail cut mid-word) and/or the in-progress pending chunk. Without it, committed +
+ * pending render those phrases TWICE (the "doubled text" bug during pauses/sentence breaks).
  */
 
 import { useCallback, useRef, useState } from 'react';
@@ -88,13 +90,37 @@ function continuesSegment(current: string, next: string): boolean {
  * an utterance-end flush commits a segment and clears `pending`, the just-ended session can
  * deliver a trailing final — or the auto-restarted session its first partial — that re-delivers
  * that segment. Word-boundary-aware (`${p} `) so a shared prefix WORD ("go" vs "google") is not
- * a false match; the exact-equality arm covers the single-word echo.
+ * a false match; the exact-equality arm covers the single-word echo. For a MULTI-word `prev`
+ * a plain prefix match is also accepted: the flush can commit a partial cut MID-WORD
+ * ("…the text evalu"), which the late final then completes ("…the text evaluates") — a
+ * word-boundary-only comparison misses that restatement and the phrase doubles.
  */
 function restatesSegment(prev: string, next: string): boolean {
   const p = normalizeForCompare(prev);
   const n = normalizeForCompare(next);
   if (!p) return false;
-  return n === p || n.startsWith(`${p} `);
+  if (n === p || n.startsWith(`${p} `)) return true;
+  // Mid-word truncation tolerance — multi-word `prev` only, so a single shared prefix
+  // WORD ("go" vs "google") is still genuine new speech, never an echo.
+  return p.includes(' ') && n.startsWith(p);
+}
+
+/**
+ * Find the start index of the LONGEST tail of `segments` (plus the in-progress `pending`,
+ * when non-empty) that `next` re-states or cumulatively extends — the MULTI-SEGMENT echo.
+ * Android's engine can emit a late final that is CUMULATIVE over the WHOLE session (its
+ * partials reset to just-new words at pauses, committing chunks along the way, then the
+ * final re-delivers everything) — so the echo can span SEVERAL committed segments, not just
+ * the last one, and can arrive while a chunk is still pending. Returns -1 when no tail
+ * matches (every candidate tail includes at least one committed segment — a `pending`-only
+ * restatement is the normal REPLACE path, not an echo).
+ */
+function findRestatedTailStart(segments: string[], pending: string, next: string): number {
+  for (let i = 0; i < segments.length; i++) {
+    const tail = [...segments.slice(i), pending].filter(Boolean).join(' ');
+    if (restatesSegment(tail, next)) return i;
+  }
+  return -1;
 }
 
 /** Commit a finalized segment, dropping an exact consecutive duplicate (guards the
@@ -136,18 +162,20 @@ export function useNativeDictation(deps: UseNativeDictationDeps): NativeDictatio
     (result: SpeechResult) => {
       if (stoppedRef.current) return; // ignore trailing post-stop results
       const transcript = result.transcript;
-      // POST-FLUSH ECHO GUARD (fixes the "doubled text" bug). `pending` is empty ONLY right
-      // after an utterance-end/new-segment commit. In that window the just-ended session can
-      // deliver a trailing final — or the auto-restarted session its first partial — that
-      // RE-STATES (or cumulatively extends) the segment we just committed. Writing it back into
-      // `pending` would render/insert that phrase TWICE (committed + pending). Pop the committed
-      // segment back into the in-progress buffer so the REPLACE-based logic below owns it again:
-      // an exact echo collapses to one copy, an extension refines it in place — never a double.
-      if (!pendingRef.current && segmentsRef.current.length > 0) {
-        const last = segmentsRef.current[segmentsRef.current.length - 1];
-        if (restatesSegment(last, transcript)) {
-          segmentsRef.current.pop();
-        }
+      // CUMULATIVE-ECHO GUARD (fixes the "doubled text" bug). Two shapes: (1) right after an
+      // utterance-end/new-segment commit (`pending` empty), the just-ended session's trailing
+      // final — or the auto-restarted session's first partial — RE-STATES (or cumulatively
+      // extends) what was just committed; (2) mid-session, the engine emits a late final that
+      // is CUMULATIVE over the WHOLE session — spanning SEVERAL committed segments plus the
+      // in-progress `pending` — even though its partials had been resetting to just-new words.
+      // Either way, writing it into `pending` as-is renders/inserts those phrases TWICE.
+      // Pop the restated tail back into the in-progress buffer so the REPLACE-based logic
+      // below owns it again: an exact echo collapses to one copy, an extension refines it in
+      // place — never a double.
+      const tailStart = findRestatedTailStart(segmentsRef.current, pendingRef.current, transcript);
+      if (tailStart !== -1) {
+        segmentsRef.current.length = tailStart;
+        pendingRef.current = '';
       }
       // A genuinely NEW segment begins only when the previous result was already FINAL
       // and this transcript does NOT continue it (Android's segmented continuous mode);

@@ -1200,3 +1200,38 @@ describe('file-edit grouping (consolidated "Files edited" widget)', () => {
     expect(body.getAllByTestId(/^file-edit-group-toggle-/)).toHaveLength(1);
   });
 });
+
+// ── rev12 cross-surface presence: the "Working locally..." transcript indicator ──
+//
+// While a terminal turn is in flight on the PC (`workingOnPc`), nothing streams to
+// the app — the transcript only hydrates when the turn COMPLETES
+// (`chat:external_turn_completed`), so without this the chat reads as dead while
+// the header badge says "Running on PC". The footer shows the working dots with a
+// "Working locally..." line instead. The LOCAL run's indicator (`isWorking`)
+// always wins — the two never double up.
+describe('working-on-pc indicator (rev12 presence)', () => {
+  const assistantMessage = {
+    id: 'm1',
+    role: 'assistant' as const,
+    blocks: [block({ type: 'text', text: 'previous turn', blockId: 'b1' })],
+  };
+
+  it('shows "Working locally..." while a terminal turn is in flight on the PC', () => {
+    render(<MessageList messages={[assistantMessage]} workingOnPc />);
+    expect(screen.getByTestId('working-on-pc-indicator')).toBeTruthy();
+    expect(screen.getByText('Working locally...')).toBeTruthy();
+    // The local run's indicator is a different element and stays absent.
+    expect(screen.queryByTestId('chat-typing-indicator')).toBeNull();
+  });
+
+  it('renders no indicator when no terminal turn is in flight', () => {
+    render(<MessageList messages={[assistantMessage]} />);
+    expect(screen.queryByTestId('working-on-pc-indicator')).toBeNull();
+  });
+
+  it('the local run indicator wins when both are active (no doubled dots)', () => {
+    render(<MessageList messages={[assistantMessage]} isWorking status="running" workingOnPc />);
+    expect(screen.queryByTestId('working-on-pc-indicator')).toBeNull();
+    expect(screen.getAllByTestId('chat-typing-indicator')).toHaveLength(1);
+  });
+});

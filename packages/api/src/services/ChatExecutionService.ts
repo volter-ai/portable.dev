@@ -22,7 +22,23 @@ import { isWorkspaceChatTarget } from '@vgit2/shared/browserConstants';
 import { getUserWorkspaceDir, getWorkspaceTmpDir } from '@vgit2/shared/constants';
 import { DEFAULT_MODEL_MODE } from '@vgit2/shared/models';
 
+import { isPidAlive } from './ExternalClaudeSessionService.js';
 import { HandshakeVerificationGate } from './HandshakeVerificationGate.js';
+
+/**
+ * rev12 D56/D57 (OQ-R12-4): a discovered transcript modified within this window
+ * is treated as possibly-live even without hook evidence — the one dangerous
+ * gap is a terminal session started while Portable was OFF (its hooks fired
+ * into the void), whose transcript is hot. The registry self-heals on that
+ * session's next turn; until then, fork.
+ */
+export const ADOPT_FRESHNESS_GUARD_MS = 60_000;
+/**
+ * rev12 D63: after a CONFIRMED stop-on-send, how long to re-check the adopt
+ * gate before falling back to fork — absorbs the pid-exit race (the SessionEnd
+ * evidence can land a beat before the process fully exits).
+ */
+export const STOP_ON_SEND_ADOPT_WAIT_MS = 2_000;
 import { MessageDeduplicationService } from './MessageDeduplicationService.js';
 import { RuntimeStateFormatter } from './RuntimeStateFormatter.js';
 import { ensureWorkspaceScaffold } from './workspaceScaffold.js';
@@ -82,7 +98,12 @@ export class ChatExecutionService {
     private sopService: any | undefined,
     private claudeCodeSessions?: Map<string, any>, // Session map
     private reposCacheService?: any, // ReposCacheService for cache invalidation
-    private handshakeVerificationGate?: HandshakeVerificationGate // block kill switch
+    private handshakeVerificationGate?: HandshakeVerificationGate, // block kill switch
+    // rev12: terminal-session presence registry — the adopt-vs-fork gate (D56/D57)
+    private externalClaudeSessionService?: import('./ExternalClaudeSessionService.js').ExternalClaudeSessionService,
+    // rev12 D63: stop-on-send — an interactive send to a terminal-LIVE chat ends
+    // the terminal session first (evidence-confirmed) so the send adopts in place.
+    private stopOnPcService?: import('./StopOnPcService.js').StopOnPcService
   ) {
     console.log('[ChatExecutionService] Initialized');
   }
@@ -348,6 +369,10 @@ export class ChatExecutionService {
         model,
         permissions,
         agentSetupId,
+        // D63: an INTERACTIVE send to a terminal-live chat means "continue
+        // HERE" — try an evidence-confirmed stop-on-PC before the adopt-vs-fork
+        // decision. The headless executeMessage chokepoint never does this.
+        stopOnPcFirst: true,
       });
 
       // Fetch chat to get defaults
@@ -412,13 +437,78 @@ export class ChatExecutionService {
   private async forkDiscoveredChatIfNeeded(
     context: ExecutionContext,
     chatId: string,
-    opts: { model?: string; permissions?: string; agentSetupId?: string }
+    opts: {
+      model?: string;
+      permissions?: string;
+      agentSetupId?: string;
+      /**
+       * rev12 D63 (stop-on-send): when the session is terminal-LIVE, attempt an
+       * evidence-confirmed Stop-on-PC BEFORE deciding adopt-vs-fork, so the send
+       * continues the SAME conversation. Interactive sends only — the headless
+       * executeMessage durability net must never kill a terminal session.
+       */
+      stopOnPcFirst?: boolean;
+    }
   ): Promise<string> {
     const { userId, authToken, emitter } = context;
 
     const origin = await this.chatService.getChatOrigin(chatId, userId, authToken);
     if (origin.origin !== 'discovered') {
       return chatId; // normal Portable chat (or unknown) — resume/create as before
+    }
+
+    // ===== ADOPT-ON-FIRST-WRITE (rev12 D56) =====
+    // When the terminal session behind this transcript is NOT live, continuing
+    // IN PLACE is safe and expected: claim the chat under the SAME id (== the
+    // session id) WITH session_id set, so the first run resumes ({ resume }
+    // without forkSession) and the conversation stays ONE session — a later
+    // `claude --resume` in the terminal sees the phone's turns too. No
+    // chat:forked (nothing to navigate to) and no synthesized-row duplicate:
+    // the chat list reconciles by session_id, so the adopted row simply
+    // overlays the discovered one.
+    let adoptable = this.isSafeToAdopt(origin.sourceSessionId, origin.lastUpdated);
+
+    // ===== STOP-ON-SEND (rev12 D63) =====
+    // Not adoptable usually means the terminal session is LIVE. An interactive
+    // send is the user saying "continue HERE" — end the terminal session first
+    // (grace-bounded, only ever confirmed by evidence: SessionEnd hook /
+    // channel death / pid exit), then re-run the SAME adopt gate. Anything
+    // unconfirmed falls through to today's fork — never data loss, and the
+    // reviewed single-writer invariant (isSafeToAdopt) is never weakened.
+    if (!adoptable && opts.stopOnPcFirst && this.stopOnPcService) {
+      try {
+        const result = await this.stopOnPcService.stop(origin.sourceSessionId, 'end');
+        if (result.stopped) {
+          adoptable = await this.waitUntilAdoptable(origin.sourceSessionId, origin.lastUpdated);
+        }
+        console.log(
+          `[ChatExecutionService] Stop-on-send for ${origin.sourceSessionId}: stopped=${result.stopped} (${result.reason}) → ${adoptable ? 'adopt' : 'fork'}`
+        );
+      } catch (error) {
+        console.error('[ChatExecutionService] Stop-on-send failed — forking:', error);
+      }
+    }
+
+    if (adoptable) {
+      await this.chatService.saveChat({
+        userId,
+        chatId,
+        type: 'claude_code',
+        title: origin.title,
+        status: 'completed',
+        repoPath: origin.cwd,
+        repoFullName: origin.repoFullName,
+        sessionId: origin.sourceSessionId,
+        model: opts.model || DEFAULT_MODEL_MODE,
+        permissions: opts.permissions || 'default',
+        agentSetupId: opts.agentSetupId || 'freestyle',
+        parentChatId: undefined,
+        authToken,
+      });
+      console.log(
+        `[ChatExecutionService] Adopt-on-first-write: adopted terminal session ${origin.sourceSessionId} in place (chat ${chatId})`
+      );
+      return chatId;
     }
 
     const newChatId = `chat-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -462,6 +552,72 @@ export class ChatExecutionService {
   }
 
   /**
+   * The adopt-vs-fork gate (rev12 D56/D57). Adoption — resuming a discovered
+   * terminal session IN PLACE — is safe only when we can positively say the
+   * terminal is done with it:
+   * - the presence registry must exist AND report the session not-live (hook
+   *   evidence; a confirmed-dead pid / SessionEnd both read as not-live);
+   * - the transcript must be COLD (older than the freshness guard) — a hot
+   *   transcript may belong to a session started while Portable was off, for
+   *   which no hook was recorded.
+   * Anything less → today's fork (never two writers on one `.jsonl`). The
+   * registry is the single-writer guard; presence infra off ⇒ always fork.
+   */
+  private isSafeToAdopt(sessionId: string, transcriptLastUpdated: number): boolean {
+    const registry = this.externalClaudeSessionService;
+    if (!registry) return false;
+
+    let session;
+    try {
+      session = registry.getSession?.(sessionId) ?? null;
+    } catch (error) {
+      console.error('[ChatExecutionService] adopt gate registry read failed — forking:', error);
+      return false;
+    }
+
+    // NO hook evidence about this session → we CANNOT rule out a live terminal
+    // (e.g. it was started BEFORE `portable start`, so its lifecycle hooks never
+    // loaded and it was never registered). A transcript idle >60s could be a
+    // dead session OR one sitting alive at a prompt — indistinguishable. Adopting
+    // it would resume `{ resume }` in place and race the terminal's next write on
+    // the SAME `.jsonl`. FORK is the safety floor (dual-active forbidden, D57).
+    if (!session) return false;
+
+    // A known-live terminal session → fork (D57). `getSession` has already applied
+    // the read-time rules (pid death, decay, TTL), so `state` is authoritative.
+    if (session.state !== 'ended') return false;
+
+    // The session is provably ENDED (a SessionEnd hook, a Stop-on-PC `end`, or a
+    // confirmed-dead pid). STRONG evidence — a confirmed pid that is dead —
+    // bypasses the mtime guard so Stop-on-PC → send continues in place even
+    // though the just-ended transcript is still hot (D56/D60).
+    if (session.pidConfirmed && !isPidAlive(session.pid)) return true;
+
+    // Ended but WITHOUT a confirmed-dead pid (SessionEnd fired but the pid was
+    // never confirmed): require the transcript to be cold as a second guard.
+    const age = Date.now() - transcriptLastUpdated;
+    return Number.isFinite(age) && age >= ADOPT_FRESHNESS_GUARD_MS;
+  }
+
+  /**
+   * rev12 D63: bounded adopt-gate re-check after a CONFIRMED stop-on-send. The
+   * stop's evidence (a SessionEnd hook) can land a beat before the CLI process
+   * fully exits, so the strict `isSafeToAdopt` (confirmed-dead pid) may lag by
+   * a few hundred ms — poll it briefly instead of weakening the gate.
+   */
+  private async waitUntilAdoptable(
+    sessionId: string,
+    transcriptLastUpdated: number
+  ): Promise<boolean> {
+    const deadline = Date.now() + STOP_ON_SEND_ADOPT_WAIT_MS;
+    for (;;) {
+      if (this.isSafeToAdopt(sessionId, transcriptLastUpdated)) return true;
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+  }
+
+  /**
    * Handle chat:create event
    * Validates data, constructs repo path, checks filesystem, and creates chat record
    */
@@ -487,6 +643,8 @@ export class ChatExecutionService {
       messages: any[];
       status: string;
       repo_path: string;
+      /** GitHub `owner/repo` — drives the chat card's owner avatar (absent for workspace chats). */
+      repoFullName?: string;
       model: string;
       permissions: string;
       agentSetupId: string;
@@ -623,7 +781,11 @@ export class ChatExecutionService {
         `[ChatExecutionService] ${userId} creating chat ${chatId} for ${owner}/${repo} at ${repo_path}, agentSetupId: ${agentSetupId || 'not set'}`
       );
 
-      // Save chat to database with actual path
+      // Save chat to database with actual path. `repo_full_name` is persisted so the
+      // mobile chat list can render the owner avatar + repo name — the resolved
+      // `repo_path` can be a flat clone / Windows path the client cannot parse for
+      // owner/repo (previously only fork-claimed/discovered chats carried it, so
+      // Portable-created chats rendered without their repo icon).
       await this.chatService.saveChat({
         userId,
         chatId,
@@ -631,6 +793,7 @@ export class ChatExecutionService {
         title,
         status: 'completed', // Initial status (not yet running)
         repoPath: repo_path,
+        repoFullName: `${owner}/${repo}`,
         agentSetupId,
         model,
         permissions,
@@ -661,6 +824,7 @@ export class ChatExecutionService {
           messages: [],
           status: 'completed',
           repo_path,
+          repoFullName: `${owner}/${repo}`,
           model,
           permissions,
           agentSetupId,

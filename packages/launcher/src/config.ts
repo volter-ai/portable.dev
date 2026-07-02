@@ -91,6 +91,35 @@ export function resolveApiCwd(): string {
   return HERE; // packaged: dist dir (flat node_modules sibling)
 }
 
+/**
+ * The CLI's own version, for `portable --version`. Candidates in order:
+ *   - the bundle's SIBLING `package.json` (packaged global install — the dist
+ *     manifest `build-portable.ts` stamps from the monorepo root version);
+ *   - the monorepo root `package.json` (dev checkout — the SAME file the dist
+ *     build reads, so both modes report the same number). The launcher's own
+ *     `packages/launcher/package.json` is deliberately NOT a candidate: its
+ *     private `0.1.0` never ships.
+ * Never throws — an unreadable/invalid candidate is skipped; all candidates
+ * failing degrades to `'unknown'`.
+ */
+export function resolveCliVersion(
+  candidates: string[] = [
+    path.join(HERE, 'package.json'), // packaged: dist dir (src/ has none in dev)
+    path.resolve(HERE, '../../../package.json'), // dev: monorepo root
+  ],
+  readFileImpl: (p: string) => Buffer | string = (p) => fs.readFileSync(p)
+): string {
+  for (const p of candidates) {
+    try {
+      const parsed = JSON.parse(String(readFileImpl(p))) as { version?: unknown };
+      if (typeof parsed.version === 'string' && parsed.version.length > 0) return parsed.version;
+    } catch {
+      // Missing / unreadable / invalid candidate — try the next one.
+    }
+  }
+  return 'unknown';
+}
+
 /** Resolve the api port from VGIT_PORT (falls back to the default). */
 export function resolveApiPort(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.VGIT_PORT?.trim();
@@ -140,6 +169,14 @@ export interface ApiChildEnvOverrides {
    * expansion happens on the child side in `@vgit2/shared/constants` (`expandTilde`).
    */
   workspaceDir?: string;
+  /**
+   * The per-boot internal-bridge secret (rev12 D53/D54). Forwarded to the api
+   * child as `PORTABLE_HOOK_SECRET` so `/api/internal/*` accepts the
+   * `x-portable-internal-secret` header written into `internal-bridge.json` for
+   * the hook-relay / mcp-sidecar processes. Unset → the internal routes reject
+   * everything (fail closed).
+   */
+  hookSecret?: string;
 }
 
 /**
@@ -265,6 +302,11 @@ export function buildApiChildEnv(
   // unresolved value leaves any inherited base value intact.
   if (overrides.workspaceDir) {
     env.WORKSPACE_DIR = overrides.workspaceDir;
+  }
+  // The per-boot internal-bridge secret (rev12) — the api's gate for
+  // /api/internal/* (hook-relay + mcp-sidecar loopback traffic).
+  if (overrides.hookSecret) {
+    env.PORTABLE_HOOK_SECRET = overrides.hookSecret;
   }
   return env;
 }

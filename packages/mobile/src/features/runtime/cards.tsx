@@ -178,6 +178,10 @@ export function ClaudeSessionCard({
           {repo ?? 'Claude session'}
         </Text>
         <Badge label={claudeSessionStatusLabel(session.status)} color={color} />
+        {/* rev12: the user's own terminal `claude` on the PC (not api-spawned). */}
+        {session.origin === 'terminal' ? (
+          <Badge label="Terminal" color={theme.colors.textTertiary} />
+        ) : null}
         {onKill ? (
           <Pressable
             testID={`${testID}-kill`}

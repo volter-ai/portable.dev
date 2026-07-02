@@ -24,6 +24,7 @@ import {
   createSocket,
   createSocketEmitters,
   type ChatCreatePayload,
+  type ChatExternalMessagesPayload,
   type ChatJoinPayload,
   type ChatSummaryUpdatedPayload,
   type ContainerStatusPayload,
@@ -304,6 +305,23 @@ export function useNativeSocket(deps: NativeSocketDeps = {}): NativeSocket {
         if (!data?.oldChatId || !data.newChatId) return;
         useSocketStore.getState().setLastForkedChat(data.oldChatId, data.newChatId);
       };
+      // rev12: a TERMINAL `claude` turn finished on the PC (Stop lifecycle hook).
+      // Fold into the socket store so the open discovered chat refreshes its
+      // transcript (the JSONL just gained a completed turn).
+      const handleExternalTurnCompleted = (...args: unknown[]) => {
+        const data = args[0] as { chatId?: string } | undefined;
+        if (!data?.chatId) return;
+        useSocketStore.getState().setLastExternalTurn(data.chatId);
+      };
+      // rev12 D62 mid-turn live-follow: new transcript rows from a TERMINAL
+      // turn still in flight, pushed by the api's transcript follower while
+      // this chat's room has members. Folded through the SAME reducers as the
+      // live stream so a terminal turn renders exactly like a local run.
+      const handleExternalMessages = (...args: unknown[]) => {
+        const data = args[0] as Partial<ChatExternalMessagesPayload> | undefined;
+        if (!data?.chatId || !Array.isArray(data.messages)) return;
+        useChatMessagesStore.getState().applyExternalMessages(data.chatId, data.messages);
+      };
       // Multi-device read-marker sync: fold `chat:read_updated` into the read-marker
       // store. On a reconnect-resync the rejoined `chat:join` catches history up and
       // the read marker reconciles in via this event.
@@ -495,6 +513,8 @@ export function useNativeSocket(deps: NativeSocketDeps = {}): NativeSocket {
       sock.on(SERVER_EVENTS.CONNECT_ERROR, handleConnectError);
       sock.on(SERVER_EVENTS.CHAT_CREATED, handleChatCreated);
       sock.on(SERVER_EVENTS.CHAT_FORKED, handleChatForked);
+      sock.on(SERVER_EVENTS.CHAT_EXTERNAL_TURN_COMPLETED, handleExternalTurnCompleted);
+      sock.on(SERVER_EVENTS.CHAT_EXTERNAL_MESSAGES, handleExternalMessages);
       sock.on(SERVER_EVENTS.CHAT_READ_UPDATED, handleReadUpdated);
       sock.on(SERVER_EVENTS.CLAUDE_STREAM, handleClaudeStream);
       sock.on(SERVER_EVENTS.CLAUDE_PROCESSING, handleClaudeProcessing);

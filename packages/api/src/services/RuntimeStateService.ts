@@ -1,6 +1,7 @@
 import { getClaudeSessionIdleTtlMs } from './SessionReaperService.js';
 
 import type { IOutputEmitter } from './emitters/IOutputEmitter.js';
+import type { ExternalClaudeSessionService } from './ExternalClaudeSessionService.js';
 import type { RuntimeStateFormatter } from './RuntimeStateFormatter.js';
 import type { TunnelService } from './TunnelService.js';
 import type { RuntimeClaudeSessionPayload } from '@vgit2/shared/types';
@@ -25,9 +26,46 @@ export class RuntimeStateService {
     private tunnelService?: TunnelService,
     private processTrackerService?: any, // ProcessTrackerService
     private runtimeStateFormatter?: RuntimeStateFormatter,
-    private claudeService?: ClaudeSessionProvider // live Claude sessions
+    private claudeService?: ClaudeSessionProvider, // live Claude sessions
+    // rev12: TERMINAL `claude` sessions on this PC (hook-fed presence registry)
+    private externalClaudeSessionService?: ExternalClaudeSessionService
   ) {
     console.log('[RuntimeStateService] Initialized');
+  }
+
+  /**
+   * TERMINAL sessions folded into the same claudeSessions array as the
+   * api-spawned ones, tagged `origin: 'terminal'` (rev12 D55). A terminal
+   * session's chatId is its Claude Code session id (== the discovered chat's
+   * id, the client's badge join key). Sessions whose id collides with an
+   * api-spawned entry are dropped — an adopted chat that the api is currently
+   * running must not appear twice (the registry row from its terminal era can
+   * lag behind reality).
+   */
+  private collectExternalSessions(
+    apiSessions: RuntimeClaudeSessionPayload[]
+  ): RuntimeClaudeSessionPayload[] {
+    if (!this.externalClaudeSessionService) return [];
+    try {
+      const apiChatIds = new Set(apiSessions.map((s) => s.chatId));
+      const now = Date.now();
+      return this.externalClaudeSessionService
+        .getLiveSessions(now)
+        .filter((s) => !apiChatIds.has(s.sessionId))
+        .map((s) => ({
+          chatId: s.sessionId,
+          repoPath: s.cwd || undefined,
+          status: (s.state === 'live-running' ? 'running' : 'idle') as 'running' | 'idle',
+          isProcessing: s.state === 'live-running',
+          lastActivityAt: s.updatedAt,
+          idleMs: s.state === 'live-running' ? 0 : Math.max(0, now - s.updatedAt),
+          resumable: true,
+          origin: 'terminal' as const,
+        }));
+    } catch (error) {
+      console.error('[RuntimeStateService] external session collection failed:', error);
+      return [];
+    }
   }
 
   /**
@@ -44,8 +82,13 @@ export class RuntimeStateService {
       const backgroundProcesses =
         this.processTrackerService.getAllProcesses().filter((p: any) => p.userId === userId) || [];
 
-      // Collect live Claude sessions
-      const claudeSessions = this.claudeService?.getClaudeSessionInfos(userId) ?? [];
+      // Collect live Claude sessions: api-spawned (origin 'portable') + the
+      // PC's terminal sessions (origin 'terminal', rev12 presence registry).
+      const apiSessions = (this.claudeService?.getClaudeSessionInfos(userId) ?? []).map((s) => ({
+        ...s,
+        origin: s.origin ?? ('portable' as const),
+      }));
+      const claudeSessions = [...apiSessions, ...this.collectExternalSessions(apiSessions)];
 
       // Only return state if there's something active
       if (tunnels.length === 0 && backgroundProcesses.length === 0 && claudeSessions.length === 0) {

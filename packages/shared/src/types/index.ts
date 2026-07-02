@@ -449,7 +449,9 @@ export type {
   RuntimeMode,
   SandboxMetrics,
   ClaudeSessionStatus,
+  ClaudeSessionOrigin,
   RuntimeClaudeSessionPayload,
+  SidecarCommand,
 } from './runtime.js';
 
 // ============================================================================

@@ -13,14 +13,18 @@ import {
   type ChatsWatcherHandle,
 } from './ChatsClient.js';
 import { ensureChromium } from './ChromiumProvisioner.js';
+import { installClaudeHooks, type InstallClaudeHooksResult } from './ClaudeHooksInstaller.js';
 import { ensureCloudflared } from './CloudflaredProvisioner.js';
 import {
   resolveApiBaseUrl,
+  resolveApiPort,
   resolveOperatorWorkspaceDir,
   resolveRelayBaseUrl,
   resolveReviewerPublish,
 } from './config.js';
 import { startConnectionWatch, type ConnectionWatcherHandle } from './ConnectionWatcher.js';
+import { internalBridgePath, mintInternalSecret, writeInternalBridge } from './InternalBridge.js';
+import { ensureSidecarRegistration } from './McpSidecarRegistrar.js';
 import { ensureJwtSecret, mintPairingToken, resolvePairingIdentity } from './PairingIdentity.js';
 import { PairingServer } from './PairingServer.js';
 import { prepareCredentials } from './prepareCredentials.js';
@@ -31,6 +35,8 @@ import {
   startLauncherUi,
   startStaticUi,
   type LauncherUiHandle,
+  type McpStatusProvider,
+  type McpStatusView,
   type StartLauncherUiOptions,
 } from './TerminalUi.js';
 import {
@@ -145,6 +151,12 @@ export interface LauncherDeps {
     load: () => Promise<ChatSummary[]>,
     onChats: (chats: ChatSummary[]) => void
   ) => ChatsWatcherHandle;
+  /**
+   * rev12 D61: data provider for the connected menu's "[3] MCP Server" status
+   * sub-view (hooks/sidecar install results + the live terminal-session
+   * registry read over loopback). Wired by {@link createLauncher}.
+   */
+  mcpStatus?: McpStatusProvider;
   /**
    * Tunnel self-heal seam (tests). Defaults to {@link startTunnelHealthMonitor}.
    * Probes the PUBLIC relay path and cycles cloudflared when it's unreachable while
@@ -290,6 +302,7 @@ export class Launcher {
         onQuit,
         onArchiveChat,
         onResumeChat,
+        mcpStatus: this.deps.mcpStatus,
       });
     } catch (err) {
       // Terminal can't render Ink — boot continues; status falls back to plain logs.
@@ -610,6 +623,83 @@ export async function createLauncher(options: CreateLauncherOptions = {}): Promi
     log(`[launcher] workspace → ${workspaceDir} (operator WORKSPACE_DIR forwarded to the api)`);
   }
 
+  // rev12 (D53): the internal bridge + global Claude Code lifecycle hooks.
+  // Mint a per-boot secret, write `<DATA_DIR>/internal-bridge.json` (how the
+  // claude-spawned `portable hook-relay` / `portable mcp-sidecar` processes
+  // find the api), and ensure the hooks in the user's real
+  // `~/.claude/settings.json`. All best-effort: presence degrades quietly,
+  // boot never blocks. The secret is forwarded to the api child as
+  // PORTABLE_HOOK_SECRET (unset on failure → the api's /api/internal/* stays
+  // fail-closed).
+  let hookSecret: string | undefined = mintInternalSecret();
+  // The ABSOLUTE bridge path (the launcher's own DATA_DIR). Embedded into the
+  // hook command + sidecar args so the claude-spawned relays read exactly this
+  // file, never re-resolving DATA_DIR from a project `.env` (B2).
+  const bridgePath = internalBridgePath();
+  try {
+    writeInternalBridge({
+      port: resolveApiPort(env),
+      secret: hookSecret,
+      startedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    hookSecret = undefined;
+    apiLog(
+      `[hooks] internal bridge write failed (presence disabled this boot): ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  const hooksInstall: InstallClaudeHooksResult = installClaudeHooks({ bridgePath, log: apiLog });
+  if (hooksInstall.status === 'failed') {
+    apiLog(`[hooks] Claude hooks install failed: ${hooksInstall.detail ?? 'unknown'}`);
+  }
+  // rev12 (D58/D61): ensure the zero-tool mcp-sidecar in the user-scope MCP
+  // config, so every terminal `claude` session spawns one (the Stop-on-PC
+  // channel + a presence signal). Best-effort like the hooks.
+  const sidecarInstall = ensureSidecarRegistration({ bridgePath, log: apiLog });
+  if (sidecarInstall.status === 'failed') {
+    apiLog(`[mcp] sidecar registration failed: ${sidecarInstall.detail ?? 'unknown'}`);
+  }
+
+  // The [3] MCP Server TUI status view (D61): static install results + a live
+  // fetch of the terminal-session registry over the loopback internal API.
+  const apiPort = resolveApiPort(env);
+  const mcpStatus: McpStatusProvider = async () => {
+    let sessions: McpStatusView['sessions'] = null;
+    let error: string | undefined;
+    if (hookSecret) {
+      try {
+        // AbortController (not AbortSignal.timeout) — launcher lint env.
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 2_000);
+        (timer as { unref?: () => void }).unref?.();
+        const res = await fetch(`http://127.0.0.1:${apiPort}/api/internal/external-sessions`, {
+          headers: { 'x-portable-internal-secret': hookSecret },
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (res.ok) {
+          const body = (await res.json()) as {
+            sessions?: Array<{ sessionId: string; cwd: string; state: string; updatedAt: number }>;
+          };
+          sessions = body.sessions ?? [];
+        } else {
+          error = `api answered ${res.status}`;
+        }
+      } catch {
+        error = 'api unreachable';
+      }
+    } else {
+      error = 'internal bridge unavailable this boot';
+    }
+    return {
+      hooks: hooksInstall.status === 'failed' ? `failed — ${hooksInstall.detail}` : 'installed',
+      sidecar:
+        sidecarInstall.status === 'failed' ? `failed — ${sidecarInstall.detail}` : 'registered',
+      sessions,
+      error,
+    };
+  };
+
   // Auto-provision cloudflared (download the official static binary once via the
   // `cloudflared` package, cross-platform) so the user need NOT install it via
   // winget/brew/apt. Falls back to an already-installed cloudflared (PATH / win32
@@ -626,6 +716,7 @@ export async function createLauncher(options: CreateLauncherOptions = {}): Promi
       debug,
       chromiumExecutablePath,
       workspaceDir,
+      hookSecret,
     },
   });
 
@@ -655,6 +746,7 @@ export async function createLauncher(options: CreateLauncherOptions = {}): Promi
     label,
     gatewayBase,
     githubLogin,
+    mcpStatus,
     // Read the GitHub login at MINT TIME over the SAME store (after
     // prepareCredentials persisted it) — the first-ever-boot fix.
     resolveGithubLogin: () => readStoredGitHubLogin(store),

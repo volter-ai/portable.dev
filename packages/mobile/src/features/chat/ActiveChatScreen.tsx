@@ -48,6 +48,9 @@ import { dispatchMessageAction } from './messageActions';
 import { useLinkedIssueViewer } from './LinkedIssueViewerHost';
 import { ActiveChatInteractions, ChatInteractionProvider } from './interactions';
 import { MessageList } from './MessageList';
+import { RunningOnPcBadge } from './RunningOnPcBadge';
+import { RunningOnPcBanner } from './RunningOnPcBanner';
+import { useRunningOnPc } from './useRunningOnPc';
 import { ChatRuntimeBubble } from './runtime/ChatRuntimeBubble';
 import { useChatRuntimePreview } from './runtime/useChatRuntimePreview';
 import { DEFAULT_AGENT_SETUP } from './useChatComposer';
@@ -121,6 +124,11 @@ export function ActiveChatScreen() {
   // link) or the cached chat-directory list; `undefined` ⇒ the badge renders nothing.
   const linkedIssue = useChatLinkedIssue(id);
   const linkedIssueViewer = useLinkedIssueViewer();
+
+  // rev12 cross-surface presence: is this chat's session live in a terminal on
+  // the PC? `onPc` drives the header badge + Stop-on-PC banner; `runningOnPc`
+  // (a turn in flight there) drives the transcript's "Working locally..." line.
+  const { onPc, runningOnPc } = useRunningOnPc(id);
 
   // The chat's running-project preview: when this chat has a live
   // dev-server tunnel, a draggable bubble floats over the transcript — iOS opens
@@ -258,6 +266,14 @@ export function ActiveChatScreen() {
             <LinkedIssueBadge linkedIssue={linkedIssue} onPress={linkedIssueViewer.open} />
           </View>
         ) : null}
+
+        {/* rev12 cross-surface presence: session live in a terminal on the PC
+            (gated on the hook so no empty padded row renders otherwise). */}
+        {onPc ? (
+          <View style={styles.headerLinkedIssue}>
+            <RunningOnPcBadge chatId={id} />
+          </View>
+        ) : null}
       </View>
 
       {/* Hidden test-contract mirror: the raw chat id + resolved per-chat settings
@@ -278,6 +294,7 @@ export function ActiveChatScreen() {
           status={status}
           error={error}
           isWorking={isWorking}
+          workingOnPc={runningOnPc}
           agentSetupId={settings.agentSetupId}
           agentName={agentInfo.name}
           agentColor={agentInfo.color}
@@ -292,6 +309,9 @@ export function ActiveChatScreen() {
       </ChatInteractionProvider>
 
       <View style={{ paddingBottom: insets.bottom }}>
+        {/* rev12: Stop-on-PC affordance — only mounts when a terminal session is
+            live on the PC (distinct from the composer's local run Stop). */}
+        <RunningOnPcBanner chatId={id} />
         <FollowUpComposer
           ref={composerRef}
           chatId={id}

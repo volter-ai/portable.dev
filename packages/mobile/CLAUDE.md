@@ -369,8 +369,12 @@ binds handlers, and exposes `{ getSocket, emitters, joinChat, reconnectAndSync }
 — connection signals surface as Zustand state in `useSocketStore`
 (`connectionState`/`connected`/`socketId`/`hasConnectedOnce`/`lastCreatedChatId`). RN lifecycle is
 injected, not baked into the shared core: AppState (`active` → reconnect+resync; `background` →
-stop retries) and NetInfo (offline→online edge → resync). **`claude:*` streaming and all
-interaction/chrome/lifecycle events are bound GLOBALLY in `bindHandlers`**, so background chats
+stop retries) and NetInfo (offline→online edge → resync). **rev12 cross-surface presence:**
+`chat:external_turn_completed` folds into `useSocketStore.lastExternalTurn` (a completed TERMINAL
+`claude` turn on the PC — `chatId` == the Claude Code session id); `useChatStream` re-joins the open
+chat on the `seq` change so the transcript hydrates the turn that streamed nowhere. **`claude:*`
+streaming and all interaction/chrome/lifecycle events are bound GLOBALLY in `bindHandlers`**, so
+background chats
 keep accumulating and the listeners survive a recovery re-point.
 
 - **App-version handshake.** `buildSocket` sends `auth: { token, appVersion }` (from
@@ -407,6 +411,36 @@ keep accumulating and the listeners survive a recovery re-point.
   deliberately NOT bound on RN.
 
 ## Chat (`src/features/chat/`)
+
+### Cross-surface presence — "Running on PC" + Stop on PC (rev12)
+
+A chat whose Claude Code session is live in a **terminal on the PC** (the api's launcher installs
+global lifecycle hooks; the backend registry folds those sessions into `user:runtime_state` with
+`origin: 'terminal'`, `chatId` == the session id == the discovered chat id). `useRunningOnPc(chatId)`
+(imported BY FILE) joins the chat id against the terminal-origin `claudeSessions` → `{ onPc,
+runningOnPc }`. **`RunningOnPcBadge`** ("Running on PC" mid-turn / "Open on PC" idle) rides
+`ChatCardBody` (lists + home preview) and the active-chat header. Mid-turn (`runningOnPc`) the
+transcript footer also shows the typing dots with a **"Working locally..."** line
+(`MessageList` `workingOnPc` prop → `TypingIndicator` `text` override, dots in theme primary);
+the local run's indicator (`isWorking`) always wins. **Mid-turn live-follow (D62):** the api
+tails the running session's transcript and pushes each newly-persisted row to the chat room as
+`chat:external_messages` (`BufferedMessage[]` — the `chat:join` ack wire shape);
+`useNativeSocket` folds the batch via `chatMessagesStore.applyExternalMessages`, which routes
+every row through the SAME reducers as the live stream (`user_message` → `appendUserMessage`,
+`claude_code_block` → `appendBlock`, blockId-deduped) — so a terminal turn renders exactly like
+a local run while it happens, and the final Stop-hook re-join snapshot reconciles idempotently.
+**`RunningOnPcBanner`** (above the
+composer, terminal-live only) offers **"Stop on PC"** — an OUTER gate returns null when `!onPc`, and
+the mutation body (`useStopOnPc` → `POST /api/chat/:sessionId/stop-on-pc`, non-throwing
+`useOptionalApi`) mounts ONLY when shown, so ActiveChatScreen still renders without an
+ApiProvider/QueryClient. A confirmed stop ends the terminal session → the next send continues the
+SAME conversation (backend adopt-on-first-write); an unconfirmed stop → the send forks. **Sending
+WITHOUT stopping first also just works (D63, backend stop-on-send):** an interactive send to a
+terminal-live chat makes the backend stop the terminal session (evidence-confirmed, ≤~8s) and
+adopt in place — the app needs no special handling (the optimistic bubble shows immediately; the
+ack simply resolves after the stop); only an unconfirmed stop falls back to the fork →
+`chat:forked` → `router.replace` as before. The Runtime
+tab labels terminal sessions "Terminal" and hides Kill for them (the api doesn't own that subprocess).
 
 ### Directory, settings, project grouping
 

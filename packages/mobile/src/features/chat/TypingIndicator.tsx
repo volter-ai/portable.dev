@@ -30,6 +30,12 @@ export interface TypingIndicatorProps {
   agentName?: string;
   /** Accent color for the dots / avatar / badge (the agent's colorTheme). */
   agentColor?: string;
+  /**
+   * Override the status line entirely (e.g. "Working locally..." while a
+   * terminal turn runs on the PC — rev12 presence). Absent ⇒ the usual
+   * "{agent} is working..." / compressing copy.
+   */
+  text?: string;
   /** Omit the text line (web `hideText` parity). */
   hideText?: boolean;
   testID?: string;
@@ -102,15 +108,17 @@ export function TypingIndicator({
   agentName,
   agentColor,
   hideText = false,
+  text: textOverride,
   testID = 'chat-typing-indicator',
 }: TypingIndicatorProps) {
   const { theme } = useAppTheme();
   const color = agentColor || DEFAULT_AGENT_COLOR;
   const displayName = agentName || 'Agent';
   const text =
-    status === 'compressing'
+    textOverride ??
+    (status === 'compressing'
       ? 'compressing, this could take a minute...'
-      : `${displayName} is working...`;
+      : `${displayName} is working...`);
 
   // Standalone slide-in (web `slideIn 0.3s ease-out`).
   const enter = useRef(new Animated.Value(inline ? 1 : 0)).current;

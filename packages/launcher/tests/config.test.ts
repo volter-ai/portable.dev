@@ -1,6 +1,9 @@
+import fs from 'fs';
+import path from 'path';
+
 import { describe, expect, it } from 'bun:test';
 
-import { loadOperatorEnv } from '../src/config.js';
+import { loadOperatorEnv, resolveCliVersion } from '../src/config.js';
 
 describe('loadOperatorEnv — the operator .env → process.env loader (fix: applePC was ignored)', () => {
   it('loads every var from the .env into the env object (not just WORKSPACE_DIR)', () => {
@@ -41,5 +44,46 @@ describe('loadOperatorEnv — the operator .env → process.env loader (fix: app
       })
     ).not.toThrow();
     expect(Object.keys(env)).toHaveLength(0);
+  });
+});
+
+describe('resolveCliVersion — the `portable --version` resolver', () => {
+  it('returns the version from the FIRST readable candidate (packaged: the sibling package.json)', () => {
+    const files: Record<string, string> = {
+      '/dist/package.json': '{"name":"@volter-ai/portable.dev","version":"3.4.0"}',
+      '/repo/package.json': '{"version":"9.9.9"}',
+    };
+    const v = resolveCliVersion(['/dist/package.json', '/repo/package.json'], (p) => files[p]);
+    expect(v).toBe('3.4.0');
+  });
+
+  it('falls through to the next candidate when the first is missing (dev: the monorepo root)', () => {
+    const v = resolveCliVersion(['/src/package.json', '/repo/package.json'], (p) => {
+      if (p === '/repo/package.json') return '{"version":"3.4.0"}';
+      throw new Error('ENOENT');
+    });
+    expect(v).toBe('3.4.0');
+  });
+
+  it('skips a package.json without a version string', () => {
+    const v = resolveCliVersion(['/a/package.json', '/b/package.json'], (p) =>
+      p === '/a/package.json' ? '{"name":"no-version"}' : '{"version":"1.2.3"}'
+    );
+    expect(v).toBe('1.2.3');
+  });
+
+  it("never throws — every candidate unreadable/invalid degrades to 'unknown'", () => {
+    const v = resolveCliVersion(['/x/package.json', '/y/package.json'], (p) => {
+      if (p === '/x/package.json') throw new Error('ENOENT');
+      return 'not json';
+    });
+    expect(v).toBe('unknown');
+  });
+
+  it('default candidates resolve the monorepo root version in a source checkout', () => {
+    const rootPkg = JSON.parse(
+      fs.readFileSync(path.resolve(import.meta.dir, '../../../package.json'), 'utf8')
+    ) as { version: string };
+    expect(resolveCliVersion()).toBe(rootPkg.version);
   });
 });

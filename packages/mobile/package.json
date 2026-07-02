@@ -1,6 +1,6 @@
 {
   "name": "@vgit2/mobile",
-  "version": "3.2.1",
+  "version": "3.4.0",
   "private": true,
   "main": "expo-router/entry",
   "description": "Portable mobile — native Expo React Native rebuild of the mobile client",

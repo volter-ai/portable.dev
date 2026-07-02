@@ -8,6 +8,7 @@
  *   portable start --dev      same, but register against the staging relay
  *                             (app.portable-dev.com) instead of production
  *   portable help             show this help
+ *   portable --version        print the installed CLI version and exit
  *
  * Run via `bun run portable` (root) or `bun --cwd packages/launcher start`.
  *
@@ -24,7 +25,7 @@ import path from 'path';
 
 import { resolveDataDir } from '@vgit2/shared/secrets';
 
-import { DEV_RELAY_BASE_URL, loadOperatorEnv } from './config.js';
+import { DEV_RELAY_BASE_URL, loadOperatorEnv, resolveCliVersion } from './config.js';
 import { createLauncher } from './Launcher.js';
 import { autoLinkIfEligible, runLinkCommand, runUnlinkCommand } from './ProjectCommands.js';
 import { acquireSingleton } from './SingletonGuard.js';
@@ -45,6 +46,7 @@ Usage:
                      dirs; warns + confirms before linking your home directory.
   portable unlink    Remove the current directory from your Portable projects.
   portable help      Show this help.
+  portable --version Print the installed CLI version and exit (also -v / \`portable version\`).
 
 Auto-link: just typing \`portable\` in a project folder links it for you — but ONLY
 when that folder is a git repo INSIDE your home directory (never your home dir
@@ -124,23 +126,61 @@ function openApiLogSink(opts: { debug: boolean }): (line: string) => void {
   };
 }
 
+/** Read `--bridge <path>` from argv (the launcher embeds the absolute bridge path). */
+function readBridgeFlag(args: string[]): string | undefined {
+  const i = args.indexOf('--bridge');
+  return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
+}
+
 async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  // The command is the first non-flag positional (default 'connect'), so
+  // `portable --debug`, `portable connect --debug`, and bare `portable` all work.
+  const command = args.find((a) => !a.startsWith('-')) ?? 'connect';
+
+  // ── claude-spawned subcommands: dispatch BEFORE loadOperatorEnv ─────────────
+  // These run inside the user's OWN `claude` sessions (with the PROJECT cwd), so
+  // loading the project `.env` here is both pointless and a footgun (a project
+  // DATA_DIR would redirect where they look for the bridge). They read the
+  // launcher-embedded absolute `--bridge` path from argv, not the env (B2).
+  //
+  // `portable hook-relay` (rev12 D53) — the lifecycle-hook relay. Silent (NEVER
+  // stdout — SessionStart hook stdout is injected into the model context), exits
+  // 0 fast, before any launcher banner/singleton/link logic.
+  if (command === 'hook-relay') {
+    const { runHookRelay } = await import('./HookRelay.js');
+    await runHookRelay({ bridgePath: readBridgeFlag(args) });
+    return;
+  }
+
+  // `portable mcp-sidecar` (rev12 D58) — the zero-tool MCP sidecar, spawned by
+  // every terminal `claude` session. stdout is OWNED by the MCP stdio protocol —
+  // no banner, no logs; runs until the parent CLI closes stdin.
+  if (command === 'mcp-sidecar') {
+    const { runMcpSidecar } = await import('./McpSidecar.js');
+    await runMcpSidecar({ bridgePath: readBridgeFlag(args) });
+    return;
+  }
+
   // Load the operator's `.env` into process.env FIRST so every launcher knob
   // (PORTABLE_PC_ID / PORTABLE_REVIEWER_PUBLISH / PORTABLE_RELAY_URL / WORKSPACE_DIR /
   // ANTHROPIC_API_KEY / GITHUB_TOKEN …) works from a `.env` file, not just an exported
   // shell var. Best-effort, never overrides an already-exported var, never throws.
   loadOperatorEnv();
 
-  const args = process.argv.slice(2);
   const wantsHelp = args.includes('help') || args.includes('--help') || args.includes('-h');
+  const wantsVersion = args.includes('--version') || args.includes('-v') || command === 'version';
   const debug = args.includes('--debug') || args.includes('-d');
   const wantsDev = args.includes('--dev');
-  // The command is the first non-flag positional (default 'connect'), so
-  // `portable --debug`, `portable connect --debug`, and bare `portable` all work.
-  const command = args.find((a) => !a.startsWith('-')) ?? 'connect';
 
   if (wantsHelp) {
     process.stdout.write(HELP);
+    return;
+  }
+
+  // `portable --version` / `-v` / `portable version`: print-and-exit, no runtime.
+  if (wantsVersion) {
+    process.stdout.write(`portable ${resolveCliVersion()}\n`);
     return;
   }
 

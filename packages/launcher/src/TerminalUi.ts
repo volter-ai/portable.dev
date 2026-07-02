@@ -73,6 +73,21 @@ export function formatRelativeTime(iso: string | undefined, now: Date = new Date
   return new Date(then).toLocaleDateString();
 }
 
+/**
+ * The "[3] MCP Server" status sub-view data (rev12 D61). `sessions` is the
+ * live terminal-session registry read over loopback (null while loading /
+ * unavailable); `hooks`/`sidecar` are this boot's install results.
+ */
+export interface McpStatusView {
+  hooks: string;
+  sidecar: string;
+  sessions: Array<{ sessionId: string; cwd: string; state: string; updatedAt: number }> | null;
+  error?: string;
+}
+
+/** Async provider for {@link McpStatusView} — polled while the view is open. */
+export type McpStatusProvider = () => Promise<McpStatusView>;
+
 /** Props shared by every screen (the root re-renders with these + a `phase`). */
 export interface RootScreenProps {
   phase: 'booting' | 'pairing' | 'connected';
@@ -97,6 +112,8 @@ export interface RootScreenProps {
   onResumeChat?: (chat: ChatSummary) => void;
   /** Called when the user chooses Quit (or Ctrl-C) on the connected menu. */
   onQuit: () => void;
+  /** rev12 D61: the "[3] MCP Server" status view's data provider. */
+  mcpStatus?: McpStatusProvider;
 }
 
 /** The QR + pairing instructions (first run / "add a device"). No hooks. */
@@ -487,7 +504,7 @@ function FaqList(props: {
  */
 export function ConnectedMenuView(props: RootScreenProps): ReturnType<typeof h> {
   const chats = props.chats ?? [];
-  const [mode, setMode] = useState<'menu' | 'qr' | 'action' | 'help'>('menu');
+  const [mode, setMode] = useState<'menu' | 'qr' | 'action' | 'help' | 'mcp'>('menu');
   const [focus, setFocus] = useState<'menu' | 'chats'>('menu');
   const [menuSel, setMenuSel] = useState(0);
   const [chatSel, setChatSel] = useState(0);
@@ -498,6 +515,28 @@ export function ConnectedMenuView(props: RootScreenProps): ReturnType<typeof h> 
   // is hovered. The hovered answer auto-expands; everything else shows a 2-line preview.
   const [helpFocus, setHelpFocus] = useState<'back' | 'faq'>('back');
   const [helpSel, setHelpSel] = useState(0);
+  // "[3] MCP Server" status view (rev12 D61): fetched on entry + polled while open.
+  const [mcpView, setMcpView] = useState<McpStatusView | null>(null);
+  useEffect(() => {
+    if (mode !== 'mcp' || !props.mcpStatus) return;
+    let live = true;
+    const load = () => {
+      props
+        .mcpStatus?.()
+        .then((view) => {
+          if (live) setMcpView(view);
+        })
+        .catch(() => {});
+    };
+    load();
+    const timer = setInterval(load, 2_500);
+    if (typeof (timer as { unref?: () => void }).unref === 'function')
+      (timer as { unref: () => void }).unref();
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [mode, props.mcpStatus]);
 
   // Terminal size is read ONCE here (a hook) so the hook order stays stable across
   // every `mode` branch below — Ink re-renders the SAME component when `mode` changes,
@@ -538,6 +577,13 @@ export function ConnectedMenuView(props: RootScreenProps): ReturnType<typeof h> 
       return;
     }
 
+    if (mode === 'mcp') {
+      if (key.escape || key.leftArrow || (input === 'b' && !key.ctrl) || key.return) {
+        setMode('menu');
+      }
+      return;
+    }
+
     if (mode === 'help') {
       const openMenu = () => {
         setMode('menu');
@@ -563,14 +609,20 @@ export function ConnectedMenuView(props: RootScreenProps): ReturnType<typeof h> 
         setHelpFocus('back');
         setHelpSel(0);
       };
+      const openMcp = () => {
+        setMcpView(null);
+        setMode('mcp');
+      };
       if (input === '1') setMode('qr');
       else if (input === '2') openHelp();
-      else if (input === '3' || input === 'q') props.onQuit();
+      else if (input === '3') openMcp();
+      else if (input === '4' || input === 'q') props.onQuit();
       else if (key.upArrow) setMenuSel((s) => Math.max(0, s - 1));
-      else if (key.downArrow) setMenuSel((s) => Math.min(2, s + 1));
+      else if (key.downArrow) setMenuSel((s) => Math.min(3, s + 1));
       else if (key.return) {
         if (menuSel === 0) setMode('qr');
         else if (menuSel === 1) openHelp();
+        else if (menuSel === 2) openMcp();
         else props.onQuit();
       } else if (key.rightArrow && chats.length > 0) {
         setChatSel((s) => clampSel(s));
@@ -637,6 +689,89 @@ export function ConnectedMenuView(props: RootScreenProps): ReturnType<typeof h> 
       notice ? h(Text, { color: 'yellow' }, notice) : null,
       h(Text, {}, ''),
       h(Text, { color: 'gray' }, '↑/↓ select · Enter · b back')
+    );
+  }
+
+  // ── MCP Server status sub-view (rev12 D61) — read-only: what the sidecar is,
+  //    this boot's hooks/registration state, and the live terminal sessions. ────
+  if (mode === 'mcp') {
+    const sessions = mcpView?.sessions ?? null;
+    return h(
+      Box,
+      { flexDirection: 'column', borderStyle: 'round', borderColor: 'cyan', paddingX: 1 },
+      h(Text, { bold: true, color: 'cyan' }, 'MCP Server'),
+      h(Text, {}, ''),
+      h(
+        Text,
+        { color: 'gray' },
+        'Portable registers a tiny MCP server (the "sidecar") that every Claude Code'
+      ),
+      h(
+        Text,
+        { color: 'gray' },
+        'session on this PC starts automatically. It reports which terminal sessions'
+      ),
+      h(
+        Text,
+        { color: 'gray' },
+        'are running (the "Running on PC" badge in the app) and carries the Stop-on-PC'
+      ),
+      h(Text, { color: 'gray' }, 'command. It exposes no tools to the model.'),
+      h(Text, {}, ''),
+      h(
+        Text,
+        {},
+        h(Text, { color: 'gray' }, 'Lifecycle hooks:  '),
+        h(
+          Text,
+          { color: mcpView?.hooks.startsWith('failed') ? 'red' : 'green' },
+          mcpView?.hooks ?? '…'
+        )
+      ),
+      h(
+        Text,
+        {},
+        h(Text, { color: 'gray' }, 'MCP registration: '),
+        h(
+          Text,
+          { color: mcpView?.sidecar.startsWith('failed') ? 'red' : 'green' },
+          mcpView?.sidecar ?? '…'
+        )
+      ),
+      h(Text, {}, ''),
+      h(Text, { bold: true, color: 'white' }, 'Live terminal sessions'),
+      mcpView?.error
+        ? h(Text, { color: 'yellow' }, `status unavailable — ${mcpView.error}`)
+        : sessions === null
+          ? h(Text, { color: 'gray' }, 'Loading…')
+          : sessions.length === 0
+            ? h(Text, { color: 'gray' }, 'None — start `claude` in a repo to see it here.')
+            : h(
+                Box,
+                { flexDirection: 'column' },
+                ...sessions
+                  .slice(0, 8)
+                  .map((s) =>
+                    h(
+                      Text,
+                      { key: s.sessionId },
+                      h(
+                        Text,
+                        { color: s.state === 'live-running' ? 'green' : 'yellow' },
+                        s.state === 'live-running' ? '● running  ' : '○ idle     '
+                      ),
+                      h(Text, { color: 'white' }, truncate(s.cwd || s.sessionId, 60))
+                    )
+                  )
+              ),
+      h(Text, {}, ''),
+      h(
+        Text,
+        { color: 'gray' },
+        'Press ',
+        h(Text, { color: 'cyan', bold: true }, 'b'),
+        ' to go back'
+      )
     );
   }
 
@@ -774,7 +909,8 @@ export function ConnectedMenuView(props: RootScreenProps): ReturnType<typeof h> 
           },
           menuRow(0, '[1]', 'Pair Device', '(QR Code)'),
           menuRow(1, '[2]', 'Help'),
-          menuRow(2, '[3]', 'Quit')
+          menuRow(2, '[3]', 'MCP Server'),
+          menuRow(3, '[4]', 'Quit')
         )
       ),
       // Vertical rule (stretches to the body height).
@@ -933,6 +1069,8 @@ export interface StartLauncherUiOptions {
   onArchiveChat?: (chatId: string) => void;
   /** Resume a chat in Claude Code (stub). */
   onResumeChat?: (chat: ChatSummary) => void;
+  /** rev12 D61: the "[3] MCP Server" status view's data provider. */
+  mcpStatus?: McpStatusProvider;
   /** Ink render seam (tests inject a fake returning an {@link Instance}). */
   renderImpl?: typeof render;
 }
@@ -970,6 +1108,7 @@ export async function startLauncherUi(options: StartLauncherUiOptions): Promise<
       onArchiveChat: options.onArchiveChat,
       onResumeChat: options.onResumeChat,
       onQuit: options.onQuit,
+      mcpStatus: options.mcpStatus,
     });
 
   let instance: Instance | null = renderImpl(build());

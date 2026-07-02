@@ -10,7 +10,7 @@
  */
 
 import type { AskUserQuestion, CustomDisplay } from '../types/chat.js';
-import type { PageContext } from '../types/common.js';
+import type { BufferedMessage, PageContext } from '../types/common.js';
 import type { ProcessData, RuntimeClaudeSessionPayload, TunnelData } from '../types/runtime.js';
 
 /**
@@ -65,6 +65,23 @@ export const SERVER_EVENTS = {
   USER_RUNTIME_STATE: 'user:runtime_state',
   SANDBOX_METRICS: 'sandbox:metrics',
   SESSION_REAPED: 'session:reaped',
+  /**
+   * rev12: a TERMINAL `claude` turn finished on the PC (the Stop lifecycle hook
+   * fired for a session Portable did not spawn). `chatId` is the Claude Code
+   * session id == the discovered chat's id — an open chat refreshes its
+   * transcript on this signal (the JSONL just gained a completed turn).
+   */
+  CHAT_EXTERNAL_TURN_COMPLETED: 'chat:external_turn_completed',
+  /**
+   * rev12 D62 (mid-turn live-follow): newly-persisted transcript rows from a
+   * TERMINAL `claude` turn still in flight, pushed to the chat room as they
+   * land on disk (the CLI writes the JSONL progressively, one line per
+   * completed block). `messages` are `BufferedMessage` rows — the same wire
+   * shape as the `chat:join` ack — folded client-side through the SAME
+   * reducers as `claude:stream` / `user_message` so a terminal turn renders
+   * exactly like a live local run.
+   */
+  CHAT_EXTERNAL_MESSAGES: 'chat:external_messages',
 } as const;
 
 export type ClientEventName = (typeof CLIENT_EVENTS)[keyof typeof CLIENT_EVENTS];
@@ -330,6 +347,20 @@ export interface ClaudeErrorPayload {
 export interface ChatForkedPayload {
   oldChatId: string;
   newChatId: string;
+}
+
+/**
+ * `chat:external_messages` — rev12 D62 mid-turn live-follow. New transcript
+ * rows (ascending synthesized id) persisted by a TERMINAL `claude` turn still
+ * in flight, pushed by the api's transcript follower while the chat room has
+ * members. Block granularity — each row is a complete `user_message` or
+ * `claude_code_block`; clients route rows through the same reducers as the
+ * live stream (`appendUserMessage` / `appendBlock`), whose blockId dedup makes
+ * the batch idempotent vs the final Stop-hook re-join snapshot.
+ */
+export interface ChatExternalMessagesPayload {
+  chatId: string;
+  messages: BufferedMessage[];
 }
 
 /**

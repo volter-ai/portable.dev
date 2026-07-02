@@ -206,6 +206,37 @@ Contrast with `@vgit2/gateway`, the public `app.portable.dev` auth + reverse-pro
   the runtime panel via `RuntimeStateService` → `UserRuntimeStatePayload.claudeSessions` (+
   `claudeSessionIdleTtlMs`), and a user can `chat:kill-session` (ownership-checked in
   `ChatExecutionService.handleKillSession`) on demand.
+- **rev12 cross-surface presence (terminal `claude` ⇄ Portable)**: the launcher installs global
+  Claude Code lifecycle hooks that POST to **`/api/internal/claude-hook`** — a secret-gated surface
+  **mounted BEFORE the JWT middleware** (the claude-spawned relays carry no JWT; the per-boot
+  `PORTABLE_HOOK_SECRET` / `x-portable-internal-secret` header is the real gate — the cloudflared
+  tunnel proxies to the same loopback port, so a loopback address proves nothing; **fail-closed when
+  the secret is unset**). **`ExternalClaudeSessionService`** (SQLite registry under `DATA_DIR`, state
+  machine `live-idle`⇄`live-running`→`ended`, PID-revalidated + TTL/decay read-time rules) tracks
+  those TERMINAL sessions; `RuntimeStateService` folds them into `claudeSessions` with
+  `origin: 'terminal'` (id-collision drop for adopted chats).
+  **`ExternalTranscriptFollowerService` (D62 mid-turn live-follow):** while a terminal turn runs
+  (`live-running`) AND the chat's Socket.IO room has members, it tails the transcript (debounced
+  `fs.watch` + a 700ms unref'd stat-poll backstop; stat-size gate skips no-growth reads) and pushes
+  each newly-persisted row to the room as **`chat:external_messages`** (`BufferedMessage[]`, the
+  `chat:join` ack wire shape — the CLI writes the JSONL progressively, one line per completed
+  block). Follow starts on the `UserPromptSubmit` hook or a `chat:join` (seams:
+  `SocketIOService.roomHasMembers` + the `onChatJoined` tap); the end hooks unfollow — the D55
+  turn-complete refresh is the final reconcile. A decayed `live-idle` keeps the follow; only
+  `ended`/unknown/empty-room stops it. **`SidecarChannelService`** +
+  **`StopOnPcService`** back the `portable mcp-sidecar` channel and the authed
+  `POST /api/chat/:sessionId/stop-on-pc` (deliver SIGINT/SIGTERM via the sidecar or a direct local
+  kill — NEVER an unconfirmed pid — then wait for evidence; grace timeout ⇒ stopped:false so the
+  caller forks). **Adopt-on-first-write** (`ChatExecutionService.isSafeToAdopt`): a discovered
+  terminal chat whose session is not-live resumes IN PLACE (no `forkSession`) instead of forking;
+  the 60s transcript-mtime freshness guard is bypassed on POSITIVE end evidence (a confirmed-dead
+  pid) so Stop-on-PC → send continues the same conversation. **Stop-on-send (D63):** the
+  interactive `handleChatMessage` passes `stopOnPcFirst` into the gate — a send to a terminal-LIVE
+  chat first runs `StopOnPcService.stop(id, 'end')` (evidence-confirmed) and re-checks the
+  unweakened adopt gate (bounded 2s pid-exit re-check); confirmed ⇒ adopt in place (ONE
+  conversation), else today's fork. The headless `executeMessage` chokepoint NEVER stops — an
+  automated cross-chat send must not kill a live terminal session. Fork stays the safety floor
+  (dual-active on one JSONL forbidden).
 - **GitHubApiService** (`src/services/GitHubApiService/`): modular (index.ts + handlers/ + utils/).
   Per-user token cache w/ expiry + shared Octokit built by `utils/octokitFactory` (401 →
   invalidate, refetch, replay once). A 401 NEVER deletes Clerk credentials/session. Factory is

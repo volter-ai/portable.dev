@@ -351,6 +351,56 @@ describe('API Routes - GET /api/chats linked issue (JsonDbAdapter)', () => {
     expect(unlinked).toBeDefined();
     expect(unlinked.linkedIssue).toBeUndefined();
   });
+
+  /**
+   * Regression: chats persisted WITHOUT `repo_full_name` (every chat created via
+   * `chat:create` before it started storing the full name) rendered with no repo
+   * icon in the mobile list — the client can't parse owner/repo out of a Windows
+   * backslash `repo_path` or the two-level workspace layout. The route now falls
+   * back to a server-side `getRepoFromPath(repo_path, workspaceRoot)` parse.
+   */
+  it('resolves repoFullName from repo_path for legacy rows persisted without repo_full_name', async () => {
+    const repoPath = path.join(getUserWorkspaceDir(testUserId), 'octocat', 'hello-world');
+    await jsonAdapter.saveChat({
+      userId: testUserId,
+      chatId: 'chat-legacy-no-fullname',
+      type: 'claude_code',
+      title: 'Legacy chat',
+      repoPath,
+    });
+
+    const response = await request(app)
+      .get('/api/chats')
+      .set('Authorization', `Bearer ${authToken}`);
+
+    expect(response.status).toBe(200);
+    const legacy = response.body.chats.find((c: any) => c.id === 'chat-legacy-no-fullname');
+    expect(legacy).toBeDefined();
+    expect(legacy.repoFullName).toBe('octocat/hello-world');
+  });
+
+  it('prefers the stored repo_full_name over the repo_path parse (flat clones)', async () => {
+    // A flat clone's disk path has no owner segment — only the stored full name
+    // (derived from the git remote at create time) can label it.
+    const flatPath = path.join(os.tmpdir(), 'some-flat-checkout');
+    await jsonAdapter.saveChat({
+      userId: testUserId,
+      chatId: 'chat-flat-clone',
+      type: 'claude_code',
+      title: 'Flat clone chat',
+      repoPath: flatPath,
+      repoFullName: 'octocat/flat-repo',
+    });
+
+    const response = await request(app)
+      .get('/api/chats')
+      .set('Authorization', `Bearer ${authToken}`);
+
+    expect(response.status).toBe(200);
+    const flat = response.body.chats.find((c: any) => c.id === 'chat-flat-clone');
+    expect(flat).toBeDefined();
+    expect(flat.repoFullName).toBe('octocat/flat-repo');
+  });
 });
 
 describe('API Routes - Repository Endpoints', () => {

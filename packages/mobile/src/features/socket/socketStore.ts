@@ -40,6 +40,12 @@ export interface SocketConnectionState {
    * SAME pair still triggers the consumer effect.
    */
   lastForkedChat: { oldChatId: string; newChatId: string; seq: number } | null;
+  /**
+   * The most recent `chat:external_turn_completed` (rev12): a TERMINAL `claude`
+   * turn finished on the PC for this chat (id == the Claude Code session id).
+   * The open chat screen refreshes its transcript on the `seq` change.
+   */
+  lastExternalTurn: { chatId: string; seq: number } | null;
 
   /** Mark the socket connected (and remember it has connected at least once). */
   markConnected: (socketId: string | null) => void;
@@ -51,6 +57,8 @@ export interface SocketConnectionState {
   setLastCreatedChatId: (chatId: string) => void;
   /** Record the latest server fork (chat:forked) so the open screen can redirect. */
   setLastForkedChat: (oldChatId: string, newChatId: string) => void;
+  /** Record a completed terminal turn (chat:external_turn_completed). */
+  setLastExternalTurn: (chatId: string) => void;
   /** Reset to the initial (pre-connection) state — used on unmount. */
   reset: () => void;
 }
@@ -62,6 +70,7 @@ const initialState = {
   hasConnectedOnce: false,
   lastCreatedChatId: null as string | null,
   lastForkedChat: null as { oldChatId: string; newChatId: string; seq: number } | null,
+  lastExternalTurn: null as { chatId: string; seq: number } | null,
 };
 
 export const useSocketStore = create<SocketConnectionState>()((set) => ({
@@ -75,6 +84,10 @@ export const useSocketStore = create<SocketConnectionState>()((set) => ({
   setLastForkedChat: (oldChatId, newChatId) =>
     set((s) => ({
       lastForkedChat: { oldChatId, newChatId, seq: (s.lastForkedChat?.seq ?? 0) + 1 },
+    })),
+  setLastExternalTurn: (chatId) =>
+    set((s) => ({
+      lastExternalTurn: { chatId, seq: (s.lastExternalTurn?.seq ?? 0) + 1 },
     })),
   // Preserve `hasConnectedOnce` is intentionally NOT preserved across reset:
   // a fresh mount is a fresh first-connection.

@@ -23,6 +23,13 @@ export interface SaveChatServiceOptions {
   repoFullName?: string;
   /** Original Claude Code session id to FORK from on first run (fork-on-first-write). */
   forkSourceSessionId?: string;
+  /**
+   * Pre-set session id (rev12 adopt-on-first-write): the ADOPTED terminal
+   * session's id, so the first run RESUMES in place ({ resume } without
+   * forkSession) instead of forking. Mutually exclusive with
+   * `forkSourceSessionId`. Normal chats leave it unset (the SDK init sets it).
+   */
+  sessionId?: string;
   /** Required - Agent setup determines system prompt and behavior */
   agentSetupId: string;
   /** Required - Model selection (sonnet, haiku, etc.) */
@@ -410,6 +417,7 @@ export class ChatService {
       repoPath,
       repoFullName,
       forkSourceSessionId,
+      sessionId,
       agentSetupId,
       model,
       permissions,
@@ -445,7 +453,9 @@ export class ChatService {
       status,
       repoPath,
       repoFullName,
-      sessionId: undefined,
+      // rev12 adopt-on-first-write: an adopted terminal chat is saved WITH its
+      // session id so the first run resumes in place. Normal chats pass none.
+      sessionId,
       forkSourceSessionId,
       systemPrompt: undefined,
       playwrightDevice: undefined,
