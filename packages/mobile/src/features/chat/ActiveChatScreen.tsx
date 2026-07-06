@@ -24,7 +24,15 @@ import type { MessageAction, QuickAction } from '@vgit2/shared/types';
 import { getRepoFromPath } from '@vgit2/shared/utils/pathHelpers';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type TextInput,
+} from 'react-native';
 import { KeyboardAvoidingView } from './KeyboardAvoidingViewCompat';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -46,8 +54,12 @@ import { projectKeyFromRepoPath } from './projectKey';
 import { FollowUpComposer, type FollowUpComposerHandle } from './FollowUpComposer';
 import { dispatchMessageAction } from './messageActions';
 import { useLinkedIssueViewer } from './LinkedIssueViewerHost';
-import { ActiveChatInteractions, ChatInteractionProvider } from './interactions';
-import { MessageList } from './MessageList';
+import {
+  ActiveChatInteractions,
+  ChatInteractionProvider,
+  useInteractionStore,
+} from './interactions';
+import { MessageList, type MessageListHandle } from './MessageList';
 import { RunningOnPcBadge } from './RunningOnPcBadge';
 import { RunningOnPcBanner } from './RunningOnPcBanner';
 import { useRunningOnPc } from './useRunningOnPc';
@@ -108,6 +120,19 @@ export function ActiveChatScreen() {
   // Imperative handle to the composer so a `prefill_input` follow-up action can
   // populate the input for editing.
   const composerRef = useRef<FollowUpComposerHandle>(null);
+
+  // Imperative handle to the transcript list: the ask-user prompt renders inside
+  // it (the `footer`), and a focused "Other" input asks the list to scroll it
+  // above the keyboard (issue #10).
+  const messageListRef = useRef<MessageListHandle>(null);
+  const handleOtherInputFocus = useCallback((input: TextInput | null) => {
+    messageListRef.current?.scrollFooterInputIntoView(input);
+  }, []);
+
+  // Is an ask-user prompt pending in the footer? The run is paused waiting for it,
+  // so the list suppresses its always-snap-on-growth while the form is edited —
+  // otherwise toggling "Other" on a stacked prompt yanks the input off-screen.
+  const hasPendingAsk = useInteractionStore((s) => !!s.askPrompts[id]);
 
   const socket = useOptionalSocket();
   const { messages, status, error, isWorking, markRead, hasMore, isLoadingMore, loadMore } =
@@ -289,7 +314,11 @@ export function ActiveChatScreen() {
       <ChatChrome chatId={id} repoPath={repoPath} onQuickAction={handleQuickAction} />
 
       <ChatInteractionProvider chatId={id} socket={socket} onStartConnection={startConnection}>
+        {/* The ask-user prompt rides INSIDE the transcript scroller (the list
+            `footer`) — a fixed sibling below the list can neither scroll to its
+            shared Submit nor keyboard-avoid its "Other" input (issue #10). */}
         <MessageList
+          ref={messageListRef}
           messages={messages}
           status={status}
           error={error}
@@ -304,8 +333,9 @@ export function ActiveChatScreen() {
           hasMore={hasMore}
           isLoadingMore={isLoadingMore}
           onLoadMore={loadMore}
+          footerActive={hasPendingAsk}
+          footer={<ActiveChatInteractions chatId={id} onOtherInputFocus={handleOtherInputFocus} />}
         />
-        <ActiveChatInteractions chatId={id} />
       </ChatInteractionProvider>
 
       <View style={{ paddingBottom: insets.bottom }}>

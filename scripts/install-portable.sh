@@ -12,7 +12,7 @@
 #
 # `source` is any npm spec / tarball path / git url. With NO source given:
 #   - Run from inside the repo checkout → it BUILDS a local artifact and installs
-#     that (the package isn't published to npm yet, so this is the working path).
+#     that (useful for testing local changes before they are published).
 #   - Run anywhere else (e.g. the hosted one-liner) → it installs the published
 #     package `@volter-ai/portable.dev`.
 #
@@ -168,7 +168,7 @@ fi
 
 # 4) Decide the install source (needs Bun for the local build):
 #      explicit arg/env  →  honored as-is
-#      inside a checkout →  build a local artifact (npm package isn't published yet)
+#      inside a checkout →  build a local artifact from your working tree
 #      otherwise         →  the published package (the hosted one-liner case)
 if [ -n "$EXPLICIT_SOURCE" ]; then
   SOURCE="$EXPLICIT_SOURCE"
@@ -212,7 +212,7 @@ for attempt in 1 2 3; do
     if grep -qiE '404|E404|not found' "$LOGF"; then
       echo "" >&2
       echo "[portable] '$SOURCE' was not found in the npm registry." >&2
-      echo "[portable] The package isn't published yet — install from a checkout instead:" >&2
+      echo "[portable] npm install failed — install from a checkout instead:" >&2
       echo "[portable]   git clone <repo> && cd mobile-vgit && bun install && scripts/install-portable.sh" >&2
       echo "[portable] (run with no source, from inside the repo, and it builds + installs a local artifact)." >&2
       echo "[portable] Or point it at a built tarball:  PORTABLE_INSTALL_SOURCE=./dist-portable/*.tgz scripts/install-portable.sh" >&2

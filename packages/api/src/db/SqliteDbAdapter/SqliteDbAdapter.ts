@@ -40,11 +40,12 @@ import {
 import { ClaudeProjectsMessageStore } from '../ClaudeProjects/ClaudeProjectsMessageStore.js';
 import { OverlayMessageStore } from '../ClaudeProjects/OverlayMessageStore.js';
 import { transcriptPath } from '../ClaudeProjects/projectsPaths.js';
+import { pickPreviewRows } from '../previewRows.js';
 import { DataTransformer } from '../utils/DataTransformer.js';
 
 import type { IMessageStore } from '../ClaudeProjects/IMessageStore.js';
 import type { ChatOrigin, DbAdapter, SaveChatOptions } from '../DbAdapter.js';
-import type { ChatRow, MessageRow } from '../JsonDbAdapter/JsonChatStore.js';
+import type { ChatRow } from '../JsonDbAdapter/JsonChatStore.js';
 
 /**
  * Opt-in: source the chat message STREAM (and discover the chat LIST) from
@@ -462,8 +463,8 @@ export class SqliteDbAdapter implements DbAdapter {
         const messages = this.messageStore
           ? await this.messageStore.readMessages(chat.id)
           : await this.store.readMessages(chat.id);
-        const firstUserMessage = messages.find((m: MessageRow) => m.type === 'user_message');
-        const lastMessage = messages.length > 0 ? messages[messages.length - 1] : undefined;
+        // Skip injected task-notification rows as preview candidates (public issue #11).
+        const { firstUserMessage, lastMessage } = pickPreviewRows(messages);
         return {
           ...this.transformer.transformChatFromDb(chat),
           message_count: messages.length,

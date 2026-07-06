@@ -483,7 +483,12 @@ describe('repos list (search, filter, paginate)', () => {
         <Pressable
           testID="fake-scan"
           onPress={() =>
-            onPayload({ gatewayBase: 'https://app.portable.dev', pcId: 'pc_x', token: 'jwt' })
+            onPayload({
+              gatewayBase: 'https://app.portable.dev',
+              pcId: 'pc_x',
+              token: 'jwt',
+              e2eKey: 'psk-base64',
+            })
           }
         >
           <Text>scan</Text>
@@ -516,6 +521,7 @@ describe('repos list (search, filter, paginate)', () => {
         gatewayBase: 'https://app.portable.dev',
         pcId: 'pc_x',
         token: 'jwt',
+        e2eKey: 'psk-base64',
       })
     );
     expect(connect).toHaveBeenCalledWith('pc_x');

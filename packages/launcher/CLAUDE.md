@@ -210,12 +210,14 @@ label, ttlMs}` to the hosted relay. **`verifyUrl` gate (cached-wrong fix):** whe
   generated `pc_<uuid>`); label via `resolvePcLabel(env)` (`PORTABLE_PC_LABEL` → hostname).
 
   > **`PORTABLE_REVIEWER_PUBLISH` (opt-in, default OFF — Apple-reviewer box ONLY).**
-  > When set, `boot()` threads the launcher-minted JWT to the agent's `reviewerToken`
-  > option and the agent adds it to the `/tunnel/register` body so the gateway stores it
-  > per `pcId` and the reviewer route serves it — so the operator never needs `JWT_SECRET`
-  > and no JWT is stored in GitHub. The heartbeat body NEVER carries the token. ⚠️ **A
-  > normal PC NEVER publishes its JWT** — default OFF leaves the register body
-  > byte-unchanged. This is ONLY for the disposable Apple-reviewer box.
+  > When set, `boot()` threads the launcher-minted JWT AND the E2E PSK to the agent's
+  > `reviewerToken`/`reviewerE2eKey` options and the agent adds both to the
+  > `/tunnel/register` body so the gateway stores them per `pcId` and the reviewer route
+  > serves them — so the operator never needs `JWT_SECRET`/the PSK and neither is stored
+  > in GitHub. The PSK rides along because the QR-skip pairing is unusable without it
+  > under mandatory E2E (portable.dev#15). The heartbeat body NEVER carries either. ⚠️
+  > **A normal PC NEVER publishes its JWT or its E2E key** — default OFF leaves the
+  > register body byte-unchanged. This is ONLY for the disposable Apple-reviewer box.
 
 - **`TunnelHealthMonitor`** (`startTunnelHealthMonitor`, tunnel self-heal) — fixes a
   failure class that crash-restart + heartbeats miss: **the local api + cloudflared are

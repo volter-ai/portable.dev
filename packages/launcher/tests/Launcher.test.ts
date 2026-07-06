@@ -118,6 +118,7 @@ function makeDeps(trace: Trace) {
 
   let tunnel: TunnelRouter | undefined;
   let capturedReviewerToken: string | undefined;
+  let capturedReviewerE2eKey: string | undefined;
   let lastPayload = '';
   let lastUiOpts: Record<string, unknown> | undefined;
   let watchCb:
@@ -130,6 +131,7 @@ function makeDeps(trace: Trace) {
   const deps: LauncherDeps = {
     apiProcess: apiProcess as never,
     jwtSecret: 'local-secret',
+    e2ePsk: 'test-e2e-psk-base64',
     pcId: 'pc_test123',
     endpoint: 'https://app.portable.dev/t/pc_test123',
     label: 'my-mac',
@@ -142,8 +144,9 @@ function makeDeps(trace: Trace) {
       trace.order.push('mint');
       return `jwt-for-${secret}`;
     },
-    makeTunnelRouter: (apiBaseUrl: string, reviewerToken?: string) => {
+    makeTunnelRouter: (apiBaseUrl: string, reviewerToken?: string, reviewerE2eKey?: string) => {
       capturedReviewerToken = reviewerToken;
+      capturedReviewerE2eKey = reviewerE2eKey;
       tunnel = new TunnelRouter({
         apiBaseUrl,
         makeCloudflaredTunnel: (opts) => {
@@ -197,6 +200,7 @@ function makeDeps(trace: Trace) {
     apiProcess,
     getTunnel: () => tunnel,
     getReviewerToken: () => capturedReviewerToken,
+    getReviewerE2eKey: () => capturedReviewerE2eKey,
     getPayload: () => lastPayload,
     getUiOpts: () => lastUiOpts,
     getReadyOpts: () => readyOpts,
@@ -235,12 +239,13 @@ describe('Launcher.boot', () => {
     expect(result.token).toBe('jwt-for-local-secret');
     expect(result.loopbackUrl).toBe('http://localhost:54321/');
 
-    // The QR payload carries exactly { gatewayBase, pcId, token }.
+    // The QR payload carries exactly { gatewayBase, pcId, token, e2eKey }.
     const payload = JSON.parse(getPayload()) as Record<string, unknown>;
     expect(payload).toEqual({
       gatewayBase: 'https://app.portable.dev',
       pcId: 'pc_test123',
       token: 'jwt-for-local-secret',
+      e2eKey: 'test-e2e-psk-base64',
     });
     expect(result.payload).toBe(getPayload());
 
@@ -535,20 +540,22 @@ describe('Launcher.boot', () => {
 });
 
 describe('Launcher.boot — reviewerToken publish (PORTABLE_REVIEWER_PUBLISH opt-in)', () => {
-  it('does NOT thread the minted JWT to makeTunnelRouter by default (the invariant)', async () => {
+  it('does NOT thread the minted JWT / E2E PSK to makeTunnelRouter by default (the invariant)', async () => {
     const trace: Trace = { order: [] };
-    const { deps, getReviewerToken } = makeDeps(trace);
-    // Default env (no PORTABLE_REVIEWER_PUBLISH) — a NORMAL PC never publishes its JWT.
+    const { deps, getReviewerToken, getReviewerE2eKey } = makeDeps(trace);
+    // Default env (no PORTABLE_REVIEWER_PUBLISH) — a NORMAL PC never publishes its
+    // JWT or its E2E key.
     const launcher = new Launcher(deps);
 
     await launcher.boot();
 
     expect(getReviewerToken()).toBeUndefined();
+    expect(getReviewerE2eKey()).toBeUndefined();
   });
 
-  it('threads the minted JWT to makeTunnelRouter when opted in', async () => {
+  it('threads the minted JWT + the E2E PSK to makeTunnelRouter when opted in', async () => {
     const trace: Trace = { order: [] };
-    const { deps, getReviewerToken } = makeDeps(trace);
+    const { deps, getReviewerToken, getReviewerE2eKey } = makeDeps(trace);
     deps.env = { VGIT_PORT: '6001', PORTABLE_REVIEWER_PUBLISH: 'true' };
     const launcher = new Launcher(deps);
 
@@ -557,17 +564,22 @@ describe('Launcher.boot — reviewerToken publish (PORTABLE_REVIEWER_PUBLISH opt
     // The published reviewerToken is exactly the launcher-minted data-path JWT.
     expect(getReviewerToken()).toBe(result.token);
     expect(getReviewerToken()).toBe('jwt-for-local-secret');
+    // The published E2E key is exactly the launcher's PSK — the same one the QR
+    // carries. Without it the QR-skip pairing is unusable under mandatory E2E
+    // (portable.dev#15).
+    expect(getReviewerE2eKey()).toBe('test-e2e-psk-base64');
   });
 
   it('stays OFF for a non-truthy flag value', async () => {
     const trace: Trace = { order: [] };
-    const { deps, getReviewerToken } = makeDeps(trace);
+    const { deps, getReviewerToken, getReviewerE2eKey } = makeDeps(trace);
     deps.env = { VGIT_PORT: '6001', PORTABLE_REVIEWER_PUBLISH: 'false' };
     const launcher = new Launcher(deps);
 
     await launcher.boot();
 
     expect(getReviewerToken()).toBeUndefined();
+    expect(getReviewerE2eKey()).toBeUndefined();
   });
 });
 

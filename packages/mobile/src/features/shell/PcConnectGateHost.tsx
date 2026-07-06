@@ -6,13 +6,20 @@
  * (StartupGate) and the SandboxSessionBoundary and decides whether the device is
  * already pointed at a PC:
  *
- *   - A PC is connected (`getConnectedPcId()` resolves a pcId) → render
- *     `children` (the rest of the authenticated ladder talks to the stable
- *     `<gatewayBase>/t/<pcId>` relay endpoint via `getRelayUrl()`).
+ *   - A PC is connected (`getConnectedPcId()` resolves a pcId) AND this device
+ *     still holds that pcId's E2E key → render `children` (the rest of the
+ *     authenticated ladder talks to the stable `<gatewayBase>/t/<pcId>` relay
+ *     endpoint via `getRelayUrl()`). A pcId whose E2E key is missing (a pairing
+ *     that predates portable.dev#13) first retries the Apple-reviewer fast path
+ *     (the review device has no QR to scan — portable.dev#15) and only then is
+ *     routed back to the scanner — E2E is mandatory on the relay data path, so
+ *     without the key every `/api/*` request would throw `NoE2eKeyError` deep in
+ *     the app.
  *   - No PC connected → an OPTIONAL Apple-reviewer pre-step: if
- *     `config.getReviewerCredentials` resolves a `{ gatewayBase, pcId, token }`
- *     triple, the dedicated App-Store reviewer is linked + connected WITHOUT the QR
- *     scanner; any non-reviewer (`null` / `403` / error) falls through.
+ *     `config.getReviewerCredentials` resolves a `{ gatewayBase, pcId, token,
+ *     e2eKey }` payload, the dedicated App-Store reviewer is linked + connected
+ *     WITHOUT the QR scanner; any non-reviewer (`null` / `403` / error) — or a
+ *     keyless response, unusable under mandatory E2E — falls through.
  *   - Still no PC → mount {@link PcConnectGate}: pairing is QR-ONLY (the `/my-pcs`
  *     picker is dropped), so it goes straight to the scanner. A scanned QR is
  *     saved (its JWT keyed by `pcId`) then connected; a successful connect flips
@@ -35,6 +42,7 @@ import {
   PcConnectErrorScreen,
   PcConnectGate,
   getConnectedPcId as defaultGetConnectedPcId,
+  getE2eKey as defaultGetE2eKey,
   usePcConnectionStore,
   type PcConnectConfig,
 } from '../pc-connect';
@@ -51,6 +59,7 @@ export interface PcConnectGateHostProps {
 
 export function PcConnectGateHost({ config, children }: PcConnectGateHostProps) {
   const getConnectedPcId = config.getConnectedPcId ?? defaultGetConnectedPcId;
+  const getE2eKey = config.getE2eKey ?? defaultGetE2eKey;
   const [phase, setPhase] = useState<Phase>('checking');
 
   // Resolve the connected-PC state once on mount. A persisted pcId means a
@@ -59,20 +68,27 @@ export function PcConnectGateHost({ config, children }: PcConnectGateHostProps) 
   useEffect(() => {
     let alive = true;
 
-    // Apple-reviewer pre-step: only runs when NO PC is connected and the seam
-    // is supplied. A `200` triple → link (save-only) + connect, skipping the QR
-    // scanner entirely; `null` / any error → fall through to the normal QR flow.
-    // Reuses the production `onLink` (= linkPc) + `onConnect` (= connectToPc) seams
-    // verbatim — no new connect path.
+    // Apple-reviewer pre-step: runs when NO PC is connected (and, portable.dev#15,
+    // when a stored pairing is missing its E2E key) and the seam is supplied. A
+    // `200` payload → link (save-only) + connect, skipping the QR scanner entirely;
+    // `null` / any error → fall through to the normal QR flow. Reuses the
+    // production `onLink` (= linkPc) + `onConnect` (= connectToPc) seams verbatim —
+    // no new connect path.
     async function tryReviewerBypass(): Promise<boolean> {
       if (!config.getReviewerCredentials) return false;
       try {
         const creds = await config.getReviewerCredentials();
         if (!creds) return false;
+        // The reviewer box publishes its E2E key with its JWT. A keyless response
+        // (an outdated gateway/box) must NOT be linked: E2E is mandatory on the
+        // relay data path, so that pairing would strand the app on a home every
+        // `/api/*` call rejects — fall through to the QR gate instead.
+        if (!creds.e2eKey) return false;
         await config.onLink({
           gatewayBase: creds.gatewayBase,
           pcId: creds.pcId,
           token: creds.token,
+          e2eKey: creds.e2eKey,
         });
         return await config.onConnect(creds.pcId);
       } catch {
@@ -89,7 +105,30 @@ export function PcConnectGateHost({ config, children }: PcConnectGateHostProps) 
         pcId = null;
       }
       if (pcId) {
-        if (alive) setPhase('connected');
+        // Self-heal the E2E migration gap (portable.dev#13): a device paired
+        // BEFORE E2E existed holds a JWT for this pcId but no e2eKey. Since E2E
+        // is mandatory on the relay data path, EVERY `/api/*` request would then
+        // throw `NoE2eKeyError` deep in the app (a dead home, no way out). Detect
+        // the missing key HERE and route to the QR scanner for a fresh pairing
+        // (the new QR carries the e2eKey) instead of dead-ending at request time.
+        let hasKey = false;
+        try {
+          hasKey = (await getE2eKey(pcId)) !== null;
+        } catch {
+          // An unreadable keychain entry is treated as absent → re-scan (the same
+          // fail-open-to-scanner posture as a corrupt pcId above).
+          hasKey = false;
+        }
+        if (hasKey) {
+          if (alive) setPhase('connected');
+          return;
+        }
+        // Missing key: the dedicated review device has no camera path out of the
+        // scanner, so retry the reviewer fast path FIRST (it re-links the JWT
+        // together with the freshly-published key, portable.dev#15). Non-reviewers
+        // resolve `null` fast (403) and land on the scanner exactly as before.
+        const healed = await tryReviewerBypass();
+        if (alive) setPhase(healed ? 'connected' : 'connect');
         return;
       }
       const bypassed = await tryReviewerBypass();
@@ -99,7 +138,7 @@ export function PcConnectGateHost({ config, children }: PcConnectGateHostProps) 
     return () => {
       alive = false;
     };
-  }, [getConnectedPcId, config]);
+  }, [getConnectedPcId, getE2eKey, config]);
 
   // Return to the QR scanner on an explicit disconnect (Runtime tab → "Disconnect").
   // `disconnectPc` clears the stored pcId + per-PC JWT first, then bumps this signal;

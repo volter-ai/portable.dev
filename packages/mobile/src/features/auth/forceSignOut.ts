@@ -28,6 +28,9 @@
  *   - the hidden dev-mode flag (`devModeStore.ts`) — gateway-environment targeting
  *   - the store-review usage timer (`usageTrackingStore.ts`) — device-level OS
  *     review-prompt cadence, capped by the OS per device anyway
+ *   - the update-prompt snooze (`updatePromptStore.ts`) — device-level "Later"
+ *     cadence for the outdated-build nudge, tied to the installed binary not the
+ *     account
  *
  * Every step is isolated: one failed clear must never abort the rest (there is
  * no half-recovered state — at worst the next boot wipes again). The Settings
@@ -88,8 +91,8 @@ export async function forceSignOut(opts: ForceSignOutOptions = {}): Promise<void
  * middleware then rewrites the cleared state to disk, so nothing survives.
  *
  * See the `forceSignOut` docblock for what is deliberately PRESERVED (the
- * install marker, dev-mode flag, and store-review usage timer — device state,
- * not user data).
+ * install marker, dev-mode flag, store-review usage timer, and update-prompt
+ * snooze — device state, not user data).
  */
 export function wipeLocalUserData(): void {
   const resets: Array<() => void> = [

@@ -155,6 +155,58 @@ describe('ClaudeProjectsChatIndex.discoverChats', () => {
     expect(await new ClaudeProjectsChatIndex(configDir).discoverChats([])).toEqual([]);
   });
 
+  it('preview rows skip injected task-notification user messages (public issue #11)', async () => {
+    const repoCwd = path.join(wsRoot, 'bg-task-app');
+    const note = [
+      '<task-notification>',
+      '<task-id>bvt6pifet</task-id>',
+      '<status>completed</status>',
+      '<summary>Background command "Start dev server" finished</summary>',
+      '</task-notification>',
+    ].join('\n');
+    const content = [
+      jline({
+        type: 'user',
+        message: { role: 'user', content: 'start the dev server' },
+        uuid: 'u1',
+        timestamp: '2026-06-25T10:00:00.000Z',
+        cwd: repoCwd,
+        sessionId: 'sess-note',
+      }),
+      jline({
+        type: 'assistant',
+        message: {
+          id: 'm1',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Server started.' }],
+        },
+        uuid: 'a1',
+        timestamp: '2026-06-25T10:00:01.000Z',
+        sessionId: 'sess-note',
+      }),
+      // the SDK injects the status blob as a LAST user message when the task ends —
+      // it must never become the chat card's preview
+      jline({
+        type: 'user',
+        message: { role: 'user', content: note },
+        uuid: 'u2',
+        timestamp: '2026-06-25T10:05:00.000Z',
+        cwd: repoCwd,
+        sessionId: 'sess-note',
+      }),
+    ].join('\n');
+    await writeTranscript(repoCwd, 'sess-note', content);
+
+    const index = new ClaudeProjectsChatIndex(configDir);
+    const chats = await index.discoverChats([{ full_name: 'me/bg-task-app', localPath: repoCwd }]);
+    expect(chats).toHaveLength(1);
+    const chat = chats[0];
+    expect(chat.messageCount).toBe(3); // the row still counts — it just never previews
+    expect((chat.firstMessageData as any).content).toBe('start the dev server');
+    expect((chat.lastMessageData as any).content).toBe('Server started.');
+    expect(chat.title).toBe('start the dev server');
+  });
+
   it('matches a JUNCTION/symlink repo: transcript cwd is the realpath target, repo is listed at the link path', async () => {
     // The repo's real on-disk location (where the SDK records `cwd`)…
     const realRepo = path.join(root, 'real', 'unreal-mcp');

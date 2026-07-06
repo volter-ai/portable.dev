@@ -13,7 +13,12 @@
  *    message id is acked;
  *  - shows a typing/processing indicator while the run is `running`
  *    (`claude:processing` / `claude:status`), and terminal interrupted / error
- *    states (`claude:interrupted` / `claude:error`).
+ *    states (`claude:interrupted` / `claude:error`);
+ *  - hosts the interactive ask-user prompt as its `footer` (issue #10): the prompt's
+ *    content is unbounded (N questions + inputs + a shared Submit), so it must live
+ *    inside the one real scroller — and `scrollFooterInputIntoView` (the `ref`
+ *    handle) nudges a focused footer input into the visible window once the
+ *    keyboard has shrunk the list (measured, not guessed).
  *
  * Block CONTENT rendering here is intentionally minimal — the full block-renderer
  * set lives in `blocks/`. This file owns the list mechanics + grouping + indicators.
@@ -21,15 +26,28 @@
 
 import type { AgentSetup, ChatStatus, MessageAction } from '@vgit2/shared/types';
 import { LinearGradient } from 'expo-linear-gradient';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type Ref,
+} from 'react';
 import {
   ActivityIndicator,
   FlatList,
   Image,
+  Keyboard,
   Pressable,
   StyleSheet,
   Text,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   type ViewToken,
 } from 'react-native';
 
@@ -43,11 +61,98 @@ import { copyToClipboard } from '../file-viewer/clipboard';
 import { lh, useAppTheme } from '../../theme';
 import { Icon } from '../../theme/icons/Icon';
 
+/** The subset of a native node the scroll-into-view measurement needs. */
+export interface MeasurableNode {
+  measureInWindow(callback: (x: number, y: number, width: number, height: number) => void): void;
+}
+
+/** Absolute window rect, as reported by `measureInWindow`. */
+export interface MeasuredRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Measurement seam: resolve a node's absolute window rect. `role` says which side
+ * of the comparison the node is (`viewport` = the list's visible container,
+ * `target` = the focused footer input) so tests can stub each independently.
+ * `measureInWindow` is a device no-op under Jest, hence the injectable default.
+ */
+export type MeasureNode = (
+  node: MeasurableNode | null,
+  role: 'viewport' | 'target'
+) => Promise<MeasuredRect | null>;
+
+const defaultMeasureNode: MeasureNode = (node) =>
+  new Promise((resolve) => {
+    if (!node || typeof node.measureInWindow !== 'function') {
+      resolve(null);
+      return;
+    }
+    node.measureInWindow((x, y, width, height) => resolve({ x, y, width, height }));
+  });
+
+/** Clearance kept between a scrolled-into-view input and the viewport edges. */
+const SCROLL_INTO_VIEW_MARGIN = 12;
+
+/**
+ * How far the list must scroll so `target` sits inside `viewport` with a margin:
+ * positive = scroll down (content moves up), negative = scroll up, 0 = already
+ * visible. Both rects are absolute (window) coordinates. The KeyboardAvoidingView
+ * shrinks the list when the keyboard opens, so the list's OWN bounds already
+ * exclude the keyboard — no keyboard-height math needed.
+ */
+export function computeScrollIntoViewDelta(
+  target: { top: number; bottom: number },
+  viewport: { top: number; bottom: number },
+  margin: number = SCROLL_INTO_VIEW_MARGIN
+): number {
+  const overBottom = target.bottom - (viewport.bottom - margin);
+  if (overBottom > 0) return overBottom;
+  const overTop = viewport.top + margin - target.top;
+  if (overTop > 0) return -overTop;
+  return 0;
+}
+
+/** Imperative surface exposed through the `ref` prop. */
+export interface MessageListHandle {
+  /**
+   * Scroll a focused `footer` input into the list's visible window: measures
+   * immediately (covers an already-open keyboard) and again on `keyboardDidShow`
+   * (only then has the KeyboardAvoidingView shrunk the list to its final size).
+   */
+  scrollFooterInputIntoView(input: MeasurableNode | null): void;
+}
+
 export interface MessageListProps {
   messages: MobileChatMessage[];
   status?: ChatStatus;
   error?: string;
   isWorking?: boolean;
+  /** Imperative handle ({@link MessageListHandle}) — React 19 ref-as-prop. */
+  ref?: Ref<MessageListHandle>;
+  /**
+   * Interactive content rendered at the END of the list (after the indicators and
+   * error row) — the ask-user prompt (issue #10). Inside the scroller so the one
+   * FlatList owns scrolling questions + Submit, and content growth auto-scroll
+   * reveals the prompt when it appears.
+   */
+  footer?: ReactNode;
+  /**
+   * True while an INTERACTIVE prompt is pending in the footer (an ask-user form).
+   * The run is paused waiting for the answer, so nothing streams — which means
+   * every content growth while it's set is footer-INTERNAL (an "Other" input
+   * mounting, the validation error row). The always-snap-on-growth policy would
+   * yank the just-revealed input off-screen on each such edit, so it is suppressed
+   * here: the prompt is still revealed once when it FIRST appears (the false→true
+   * edge), and thereafter a focused input positions itself via
+   * {@link MessageListHandle.scrollFooterInputIntoView} instead (issue #10).
+   */
+  footerActive?: boolean;
+  /** Measurement seam for {@link MessageListHandle.scrollFooterInputIntoView}. */
+  measureNode?: MeasureNode;
   /**
    * rev12 presence: a terminal turn is in flight on the PC. Nothing streams to
    * the app during it (the transcript hydrates only when the turn completes),
@@ -448,9 +553,65 @@ export function MessageList({
   isLoadingMore,
   onLoadMore,
   scheduleScroll = defaultScheduleScroll,
+  ref,
+  footer,
+  footerActive,
+  measureNode = defaultMeasureNode,
 }: MessageListProps) {
   const listRef = useRef<FlatList<MobileChatMessage>>(null);
   const { theme } = useAppTheme();
+
+  // ── Footer-input keyboard scroll (issue #10) ──────────────────────────────
+  // The container View's bounds ARE the visible list window (the root
+  // KeyboardAvoidingView shrinks it when the keyboard opens), so scrolling a
+  // focused footer input into view is a pure measure-and-nudge — no keyboard
+  // height involved. The latest content offset is tracked via `onScroll` because
+  // FlatList exposes no synchronous read.
+  const containerRef = useRef<View>(null);
+  const scrollOffsetRef = useRef(0);
+  const handleScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
+  }, []);
+
+  // One-shot keyboardDidShow subscription: replaced on every focus, removed on
+  // unmount — never leaks past the component (the #1435 setTimeout-cleanup lesson).
+  const keyboardScrollSubRef = useRef<{ remove: () => void } | null>(null);
+  useEffect(() => () => keyboardScrollSubRef.current?.remove(), []);
+
+  const scrollFooterInputIntoView = useCallback(
+    (input: MeasurableNode | null) => {
+      if (!input) return;
+      const run = async () => {
+        const [viewport, target] = await Promise.all([
+          measureNode(containerRef.current, 'viewport'),
+          measureNode(input, 'target'),
+        ]);
+        if (!viewport || !target) return;
+        const delta = computeScrollIntoViewDelta(
+          { top: target.y, bottom: target.y + target.height },
+          { top: viewport.y, bottom: viewport.y + viewport.height }
+        );
+        if (delta === 0) return;
+        listRef.current?.scrollToOffset({
+          offset: Math.max(0, scrollOffsetRef.current + delta),
+          animated: true,
+        });
+      };
+      // Now (keyboard may already be up) + once the keyboard finishes opening
+      // (the KeyboardAvoidingView has shrunk the list only then).
+      void run();
+      keyboardScrollSubRef.current?.remove();
+      const sub = Keyboard.addListener('keyboardDidShow', () => {
+        sub.remove();
+        if (keyboardScrollSubRef.current === sub) keyboardScrollSubRef.current = null;
+        void run();
+      });
+      keyboardScrollSubRef.current = sub;
+    },
+    [measureNode]
+  );
+
+  useImperativeHandle(ref, () => ({ scrollFooterInputIntoView }), [scrollFooterInputIntoView]);
 
   // Drop messages that are ENTIRELY a background-task notification (a runtime status blob
   // the agent injected — see `taskNotification`): machine context, never a user bubble. A
@@ -504,6 +665,16 @@ export function MessageList({
   // bottom — an accepted trade-off of "always return to the bottom".)
   const contentHeightRef = useRef(0);
 
+  // When an interactive prompt FIRST appears (footerActive false→true), allow exactly
+  // ONE growth-snap so the freshly-mounted prompt (and its shared Submit) is revealed;
+  // every later footer-internal growth is then suppressed (see `footerActive`). Tracked
+  // with a render-time ref compare (not an effect) so the flag is already set before the
+  // async `onContentSizeChange` reads it — an effect can race the native layout callback.
+  const prevFooterActiveRef = useRef(false);
+  const pendingFooterRevealRef = useRef(false);
+  if (footerActive && !prevFooterActiveRef.current) pendingFooterRevealRef.current = true;
+  prevFooterActiveRef.current = !!footerActive;
+
   // Snap to the true bottom, deferred one frame past the layout commit (see
   // `defaultScheduleScroll`) — NON-animated on purpose: opening a chat with history
   // virtualizes (see `initialNumToRender`), so the content height is measured
@@ -524,9 +695,16 @@ export function MessageList({
         suppressScrollRef.current = false;
         return;
       }
-      if (grew) scrollToBottom();
+      if (!grew) return;
+      // A pending interactive footer (ask-user form) grows on in-form edits (an "Other"
+      // input mounting, the error row) with no stream to follow — snapping to the bottom
+      // would yank the just-revealed input off-screen. Allow only the ONE reveal snap when
+      // the prompt first appears; a focused input then positions itself (issue #10).
+      if (footerActive && !pendingFooterRevealRef.current) return;
+      pendingFooterRevealRef.current = false;
+      scrollToBottom();
     },
-    [scrollToBottom]
+    [scrollToBottom, footerActive]
   );
 
   // Snap to the bottom the moment a run starts — i.e. the "AI is responding" placeholder
@@ -637,7 +815,7 @@ export function MessageList({
     </View>
   ) : null;
 
-  const footer = (
+  const listFooter = (
     <View>
       {showStandaloneIndicator && (
         <TypingIndicator status={status} agentName={agentName} agentColor={agentColor} />
@@ -658,11 +836,15 @@ export function MessageList({
           <Text style={[styles.errorText, { color: theme.colors.error }]}>{error}</Text>
         </View>
       )}
+      {/* Interactive prompt surface (ask-user) — LAST, inside the scroller, so the
+          shared Submit is always reachable by scrolling and the prompt's growth
+          rides the content-growth auto-scroll (issue #10). */}
+      {footer}
     </View>
   );
 
   return (
-    <View style={styles.container}>
+    <View ref={containerRef} style={styles.container}>
       {/* Hidden counts: RN FlatList virtualizes (~10 rows under Jest), so list-
           level assertions read these rather than rendered rows. */}
       <Text testID="chat-message-count" style={styles.hidden}>
@@ -681,6 +863,10 @@ export function MessageList({
         keyExtractor={keyExtractor}
         renderItem={renderItem}
         onScrollBeginDrag={handleScrollBeginDrag}
+        // Tracks the live content offset for `scrollFooterInputIntoView` (FlatList
+        // has no synchronous offset read).
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
         onContentSizeChange={handleContentSizeChange}
         onViewableItemsChanged={handleViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
@@ -689,7 +875,7 @@ export function MessageList({
         onStartReached={handleStartReached}
         onStartReachedThreshold={0.5}
         ListHeaderComponent={header}
-        ListFooterComponent={footer}
+        ListFooterComponent={listFooter}
         contentContainerStyle={styles.listContent}
         // Virtualization tuning to keep a streamed update cheap (the "VirtualizedList
         // slow to update" warning): render a screenful first, then small per-batch +

@@ -33,6 +33,9 @@ import type { LocalSecretStore } from '@vgit2/shared/secrets';
 /** Namespaced LocalSecretStore key for the persisted local JWT secret. */
 export const JWT_SECRET_KEY = 'launcher:jwt-secret';
 
+/** Namespaced LocalSecretStore key for the persisted E2E pre-shared key. */
+export const E2E_PSK_KEY = 'launcher:e2e-psk';
+
 /** Bytes of entropy for a generated JWT secret (256-bit → 64 hex chars). */
 const JWT_SECRET_BYTES = 48;
 
@@ -65,6 +68,39 @@ export function ensureJwtSecret(
 
   const generated = crypto.randomBytes(JWT_SECRET_BYTES).toString('hex');
   store.set(JWT_SECRET_KEY, generated);
+  return generated;
+}
+
+/**
+ * Ensure the local E2E pre-shared key exists and return it (base64 of 32
+ * random bytes). Mirrors {@link ensureJwtSecret}: env override
+ * (`PORTABLE_E2E_PSK`) → persisted store value → freshly generated + persisted.
+ *
+ * This PSK authenticates the per-session X25519 handshake
+ * (`@vgit2/shared/e2e`, portable.dev#13). It travels ONLY inside the pairing
+ * QR — never over the relay — and is forwarded to the api child as
+ * `PORTABLE_E2E_PSK` so the PC side can answer handshakes. Because pairing
+ * requires re-scanning when it changes, it is stable across boots (like the
+ * JWT secret), not per-session; per-session forward secrecy comes from the
+ * ephemeral X25519 exchange it authenticates.
+ */
+export function ensureE2ePsk(
+  store: LocalSecretStore,
+  env: NodeJS.ProcessEnv = process.env
+): string {
+  const fromEnv = env.PORTABLE_E2E_PSK?.trim();
+  if (fromEnv) {
+    if (store.get(E2E_PSK_KEY)?.trim() !== fromEnv) {
+      store.set(E2E_PSK_KEY, fromEnv);
+    }
+    return fromEnv;
+  }
+
+  const existing = store.get(E2E_PSK_KEY)?.trim();
+  if (existing) return existing;
+
+  const generated = crypto.randomBytes(32).toString('base64');
+  store.set(E2E_PSK_KEY, generated);
   return generated;
 }
 

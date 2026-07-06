@@ -13,7 +13,7 @@
 import { stripAutopilotCompletionInstruction } from '@vgit2/shared/utils/autopilotHelpers';
 import { Image, StyleSheet, Text, View } from 'react-native';
 
-import { stripTaskNotifications } from '../chat/taskNotification';
+import { stripTaskNotificationsForPreview } from '../chat/taskNotification';
 
 import type { ChatListItem } from '@vgit2/shared/types';
 
@@ -51,12 +51,17 @@ export function ChatCardBody({ chat, onOpenLinkedIssue }: ChatCardBodyProps) {
   // `customDisplay.displayText`, but defend against any path that persisted the raw
   // augmented content — and stay consistent with the `lastMessagePreview` strip below.
   // An instruction-only preview strips to '' and falls through to summary/title.
+  // Task notifications use the PREVIEW strip: the backend truncates previews at 100
+  // chars, so the closing tag may be gone and the strict strip can't match (issue #11) —
+  // this also covers previews built by an older PC api that didn't strip server-side.
   const cleanFirstPreview = chat.firstMessagePreview
-    ? stripTaskNotifications(stripAutopilotCompletionInstruction(chat.firstMessagePreview))
+    ? stripTaskNotificationsForPreview(
+        stripAutopilotCompletionInstruction(chat.firstMessagePreview)
+      )
     : '';
   const titleText = cleanFirstPreview || chat.summary || chat.title || 'Untitled chat';
   const lastMessage = chat.lastMessagePreview
-    ? stripTaskNotifications(pruneAutopilotStopWord(chat.lastMessagePreview))
+    ? stripTaskNotificationsForPreview(pruneAutopilotStopWord(chat.lastMessagePreview))
     : '';
   // Prefer the backend-resolved GitHub full name (owner/repo, from the git remote): the
   // flat-clone `repo_path` is a raw disk path that can't be parsed for owner/repo, so

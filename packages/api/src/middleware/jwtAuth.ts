@@ -72,6 +72,9 @@ const PUBLIC_ROUTES = [
   '/health',
   '/api/healthcheck',
   '/api/min-version', // Version gate check — must be reachable before auth
+  // E2E handshake (portable.dev#13): self-authenticating (PSK-keyed MAC) — the
+  // relay cannot complete it. NOTE: startsWith keeps `/api/e2e` itself gated.
+  '/api/e2e/handshake',
   '/auth/github',
   '/auth/github/callback',
 ];

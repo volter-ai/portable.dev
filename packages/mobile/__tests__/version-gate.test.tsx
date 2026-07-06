@@ -1,16 +1,19 @@
 /**
- * Force-update version gate.
+ * Version-update gate (dismissible "Update available" card — #1522).
  *
- * Covers the four layers of the version-update feature:
+ * Covers the five layers of the version-update feature:
  *   1. `meetsMinimumVersion` — the major.minor comparison rule (patch ignored,
  *      fail-open on unparseable).
  *   2. `runVersionGate` — the retry + fail-open orchestration.
  *   3. `GatewayClient.getMinVersion` — hits the EXISTING public
  *      `GET /api/min-version-v2` (no Bearer, no cookies).
- *   4. `VersionGate` — the blocking gate view: splash while checking, the
- *      update screen when behind, children when up to date / fail-open.
+ *   4. `shouldShowUpdatePrompt` / `updatePromptStore` — the persisted "Later"
+ *      snooze window (24h, MMKV).
+ *   5. `VersionGate` — splash while checking; when behind, children render
+ *      UNDERNEATH a dismissible card (the app is NEVER hard-blocked); children
+ *      alone when up to date / fail-open / snoozed.
  *
- * The component tests render the themed splash/update screen, which read the
+ * The component tests render the themed splash/update card, which read the
  * MMKV-backed theme store → `react-native-mmkv` is mocked in-memory.
  */
 
@@ -27,9 +30,17 @@ jest.mock('react-native-mmkv', () => {
 });
 
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
-import { Text } from 'react-native';
+import { Linking, Text } from 'react-native';
 
-import { VersionGate, meetsMinimumVersion, runVersionGate } from '../src/features/version-update';
+import {
+  APP_STORE_URL,
+  UPDATE_PROMPT_SNOOZE_MS,
+  VersionGate,
+  meetsMinimumVersion,
+  runVersionGate,
+  shouldShowUpdatePrompt,
+  useUpdatePromptStore,
+} from '../src/features/version-update';
 import { GatewayClient } from '../src/services/gatewayClient';
 import { createMockGateway } from '../src/test';
 
@@ -119,7 +130,29 @@ describe('GatewayClient.getMinVersion → GET /api/min-version-v2', () => {
   });
 });
 
-describe('VersionGate (blocking gate view)', () => {
+describe('shouldShowUpdatePrompt (the persisted "Later" snooze window)', () => {
+  const NOW = 1_750_000_000_000;
+
+  it('shows when never dismissed', () => {
+    expect(shouldShowUpdatePrompt(null, NOW)).toBe(true);
+  });
+
+  it('snoozes within the window and reappears after it elapses', () => {
+    expect(shouldShowUpdatePrompt(NOW - 1, NOW)).toBe(false); // just dismissed
+    expect(shouldShowUpdatePrompt(NOW - UPDATE_PROMPT_SNOOZE_MS + 1, NOW)).toBe(false); // inside
+    expect(shouldShowUpdatePrompt(NOW - UPDATE_PROMPT_SNOOZE_MS, NOW)).toBe(true); // elapsed
+  });
+
+  it('stays snoozed when the clock moved backwards (never nag on clock skew)', () => {
+    expect(shouldShowUpdatePrompt(NOW + 60_000, NOW)).toBe(false);
+  });
+});
+
+describe('VersionGate (dismissible update prompt — never hard-blocks)', () => {
+  beforeEach(() => {
+    useUpdatePromptStore.setState({ dismissedAt: null });
+  });
+
   it('shows the branded splash while the check is in flight, then renders children', async () => {
     let resolveMin: (v: string) => void = () => {};
     render(
@@ -149,7 +182,7 @@ describe('VersionGate (blocking gate view)', () => {
     expect(screen.queryByTestId('version-gate-loading')).toBeNull();
   });
 
-  it('blocks with the UpdateRequired screen when the app is behind; the button opens the store', async () => {
+  it('shows the dismissible card OVER the still-rendered children when the app is behind; Update opens the store', async () => {
     const onUpdate = jest.fn();
     render(
       <VersionGate deps={{ appVersion: '1.0.0', getMinimumVersion: async () => '2.0.0', onUpdate }}>
@@ -157,14 +190,131 @@ describe('VersionGate (blocking gate view)', () => {
       </VersionGate>
     );
 
-    expect(await screen.findByTestId('update-required-screen')).toBeTruthy();
-    expect(screen.queryByTestId('app-children')).toBeNull();
+    // The card appears, but the app renders UNDERNEATH it — never a hard block.
+    expect(await screen.findByTestId('update-available-card')).toBeTruthy();
+    expect(screen.getByTestId('app-children')).toBeTruthy();
 
-    fireEvent.press(screen.getByTestId('update-required-button'));
+    fireEvent.press(screen.getByTestId('update-available-update'));
     expect(onUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it('renders children when the app meets the minimum (no update screen)', async () => {
+  it('the default Update action deep-links the platform store (no onUpdate override)', async () => {
+    // Production mounts VersionGate with no onUpdate, so the real CTA is
+    // UpdateAvailableCard's Linking.openURL default — exercise it, not the seam.
+    const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+    try {
+      render(
+        <VersionGate deps={{ appVersion: '1.0.0', getMinimumVersion: async () => '2.0.0' }}>
+          <Text testID="app-children">APP</Text>
+        </VersionGate>
+      );
+
+      fireEvent.press(await screen.findByTestId('update-available-update'));
+
+      // jest-expo defaults Platform.OS to 'ios' → the App Store URL.
+      expect(openURL).toHaveBeenCalledTimes(1);
+      expect(openURL).toHaveBeenCalledWith(APP_STORE_URL);
+      // The card stays up (updating happens out-of-app); no snooze is recorded.
+      expect(screen.getByTestId('update-available-card')).toBeTruthy();
+      expect(useUpdatePromptStore.getState().dismissedAt).toBeNull();
+    } finally {
+      openURL.mockRestore();
+    }
+  });
+
+  it('"Later" dismisses the card, keeps the app usable, and persists the snooze', async () => {
+    const NOW = 1_750_000_000_000;
+    render(
+      <VersionGate
+        deps={{ appVersion: '1.0.0', getMinimumVersion: async () => '2.0.0', now: () => NOW }}
+      >
+        <Text testID="app-children">APP</Text>
+      </VersionGate>
+    );
+
+    expect(await screen.findByTestId('update-available-card')).toBeTruthy();
+
+    fireEvent.press(screen.getByTestId('update-available-later'));
+
+    expect(screen.queryByTestId('update-available-card')).toBeNull();
+    expect(screen.getByTestId('app-children')).toBeTruthy();
+    expect(useUpdatePromptStore.getState().dismissedAt).toBe(NOW);
+  });
+
+  it('does NOT nag again on a relaunch inside the snooze window', async () => {
+    const DISMISSED_AT = 1_750_000_000_000;
+    useUpdatePromptStore.setState({ dismissedAt: DISMISSED_AT });
+
+    render(
+      <VersionGate
+        deps={{
+          appVersion: '1.0.0',
+          getMinimumVersion: async () => '2.0.0',
+          now: () => DISMISSED_AT + 60 * 60 * 1000, // 1h later, same day
+        }}
+      >
+        <Text testID="app-children">APP</Text>
+      </VersionGate>
+    );
+
+    expect(await screen.findByTestId('app-children')).toBeTruthy();
+    expect(screen.queryByTestId('update-available-card')).toBeNull();
+  });
+
+  it('re-shows the card on a relaunch once the snooze window has elapsed', async () => {
+    const DISMISSED_AT = 1_750_000_000_000;
+    useUpdatePromptStore.setState({ dismissedAt: DISMISSED_AT });
+
+    render(
+      <VersionGate
+        deps={{
+          appVersion: '1.0.0',
+          getMinimumVersion: async () => '2.0.0',
+          now: () => DISMISSED_AT + UPDATE_PROMPT_SNOOZE_MS,
+        }}
+      >
+        <Text testID="app-children">APP</Text>
+      </VersionGate>
+    );
+
+    expect(await screen.findByTestId('update-available-card')).toBeTruthy();
+    expect(screen.getByTestId('app-children')).toBeTruthy();
+  });
+
+  it('does NOT pop the card mid-session when the snooze elapses without a remount (latched)', async () => {
+    const DISMISSED_AT = 1_750_000_000_000;
+    useUpdatePromptStore.setState({ dismissedAt: DISMISSED_AT });
+    let clock = DISMISSED_AT + 60 * 60 * 1000; // 1h after dismissal → still snoozed
+    const now = () => clock;
+    const deps = { appVersion: '1.0.0', getMinimumVersion: async () => '2.0.0', now };
+
+    const { rerender } = render(
+      <VersionGate deps={deps}>
+        <Text testID="app-children">APP</Text>
+      </VersionGate>
+    );
+
+    // Latched not-due at verdict time → no card.
+    expect(await screen.findByTestId('app-children')).toBeTruthy();
+    expect(screen.queryByTestId('update-available-card')).toBeNull();
+
+    // The 24h window elapses while the process stays alive, then a re-render fires
+    // (ordinary navigation). A per-render clock check would pop the modal here.
+    await act(async () => {
+      clock = DISMISSED_AT + UPDATE_PROMPT_SNOOZE_MS + 1;
+      rerender(
+        <VersionGate deps={deps}>
+          <Text testID="app-children">APP</Text>
+        </VersionGate>
+      );
+      await Promise.resolve();
+    });
+
+    // Still no card — the decision was latched at verdict time, not re-derived.
+    expect(screen.queryByTestId('update-available-card')).toBeNull();
+  });
+
+  it('renders children when the app meets the minimum (no update card)', async () => {
     render(
       <VersionGate deps={{ appVersion: '2.0.0', getMinimumVersion: async () => '1.0.0' }}>
         <Text testID="app-children">APP</Text>
@@ -172,7 +322,7 @@ describe('VersionGate (blocking gate view)', () => {
     );
 
     expect(await screen.findByTestId('app-children')).toBeTruthy();
-    expect(screen.queryByTestId('update-required-screen')).toBeNull();
+    expect(screen.queryByTestId('update-available-card')).toBeNull();
   });
 
   it('fails OPEN to children when the version service errors out', async () => {
@@ -191,6 +341,6 @@ describe('VersionGate (blocking gate view)', () => {
     );
 
     expect(await screen.findByTestId('app-children')).toBeTruthy();
-    expect(screen.queryByTestId('update-required-screen')).toBeNull();
+    expect(screen.queryByTestId('update-available-card')).toBeNull();
   });
 });

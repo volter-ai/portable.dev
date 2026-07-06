@@ -55,6 +55,7 @@ import {
   useSocketStore,
   type NativeSocket,
 } from '../src/features/socket';
+import { configureE2eSessions, __resetE2eSessions } from '../src/features/api/e2eSessionManager';
 import type { AppStateLike, NetInfoLike, AppStateStatus } from '../src/features/socket';
 import { createMockSocket, type MockSocketIoModule } from '../src/test';
 
@@ -157,6 +158,7 @@ describe('RN socket provider on the shared core', () => {
       useChatChromeStore.getState().reset();
     });
     controller.reset();
+    __resetE2eSessions();
   });
 
   it('reconnects + resyncs joined rooms when AppState transitions to active', async () => {
@@ -205,6 +207,55 @@ describe('RN socket provider on the shared core', () => {
       controller.emitServerEvent(SERVER_EVENTS.CONNECT_ERROR, new Error('boom'));
     });
     expect(screen.getByTestId('conn').props.children).toBe('reconnecting');
+  });
+
+  it('recovers a stale E2E session on connect_error (drop + rebuild with a fresh handshake)', async () => {
+    // Configure the E2E manager so isE2eConfigured() is true (the recovery gate)
+    // with a resolvable pcId so dropConnectedE2eSession can evict.
+    configureE2eSessions({
+      outerFetch: async () => ({}) as unknown as Response,
+      getPcId: async () => 'pc-1',
+      getE2eKey: async () => 'a2V5',
+      getRelayBase: async () => 'https://sandbox.portable.test',
+    });
+    const fakeSession = {
+      sessionId: 'sid-1',
+      keys: { c2s: new Uint8Array(32), s2c: new Uint8Array(32) },
+    };
+    // The injected resolver stands in for the per-PC handshake; each call = one
+    // fresh handshake, so its call count is the observable rebuild signal.
+    const getE2eSession = jest.fn(async () => fakeSession);
+
+    const apiHolder: { api: NativeSocket | null } = { api: null };
+    render(
+      <SocketProvider
+        getAuthToken={async () => 'token-abc'}
+        getRelayUrl={async () => 'https://sandbox.portable.test'}
+        appState={appCtl.appState}
+        netInfo={netCtl.netInfo}
+        getE2eSession={getE2eSession}
+      >
+        <CaptureApi onReady={(a) => (apiHolder.api = a)} />
+        <StateProbe />
+      </SocketProvider>
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // Initial build handshakes exactly once.
+    expect(getE2eSession).toHaveBeenCalledTimes(1);
+
+    // The PC's api restarted → it rejects the socket's now-orphan e2eSid. socket.io
+    // would retry the SAME dead sid forever; the recovery must drop + re-handshake.
+    await act(async () => {
+      controller.emitServerEvent(SERVER_EVENTS.CONNECT_ERROR, new Error('E2E session required'));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getE2eSession).toHaveBeenCalledTimes(2);
   });
 
   it('reconnects + resyncs on an offline → online NetInfo transition', async () => {

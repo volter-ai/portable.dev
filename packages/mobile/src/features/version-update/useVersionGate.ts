@@ -1,11 +1,13 @@
 /**
- * useVersionGate — ViewModel for the cold-start force-update gate. On mount it
- * reads the app's own version, fetches the gateway minimum
+ * useVersionGate — ViewModel for the cold-start version-update gate. On mount
+ * it reads the app's own version, fetches the gateway minimum
  * (the public `GET /api/min-version-v2`), and resolves a tri-state the gate view
  * renders against:
  *   - `checking`         — the check is in flight (the gate shows a splash)
  *   - `ok`               — the app meets the minimum, OR the check failed open
- *   - `update-required`  — the app is behind on major.minor → block + update screen
+ *   - `update-required`  — the app is behind on major.minor → a newer version is
+ *                          available; the gate overlays the dismissible
+ *                          "Update available" card (never a hard block, #1522)
  *
  * Every I/O seam is injectable so the hook unit-tests with no network / native
  * modules. The default reads the version from `expo-constants` (baked into the
@@ -32,10 +34,15 @@ export interface VersionGateDeps extends Partial<
   /** Gateway client used to build the default `getMinimumVersion`. */
   gateway?: GatewayClient;
   /**
-   * Store-open action for the {@link UpdateRequiredScreen} (default: open the
+   * Store-open action for the {@link UpdateAvailableCard} (default: open the
    * platform store via `Linking`). Surfaced here so the gate can thread it down.
    */
   onUpdate?: () => void;
+  /**
+   * Clock for the "Later" snooze window (default `Date.now`; tests inject a
+   * fixed epoch to drive the reappear-after-24h behavior deterministically).
+   */
+  now?: () => number;
 }
 
 /** Read this build's own version (baked into the bundle from app.json). */

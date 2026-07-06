@@ -189,6 +189,35 @@ describe('SqliteDbAdapter - chat/message persistence on SQLite', () => {
     expect(previews[0].last_message_data).toEqual({ text: 'last' });
   });
 
+  it('skips injected task-notification rows when picking preview messages (public issue #11)', async () => {
+    const note = [
+      '<task-notification>',
+      '<task-id>bvt6pifet</task-id>',
+      '<status>completed</status>',
+      '<summary>Background command "dev server" finished</summary>',
+      '</task-notification>',
+    ].join('\n');
+    await adapter.saveChat({
+      userId: USER,
+      chatId: 'chat-note',
+      type: 'claude_code',
+      title: 'Chat note',
+    });
+    // The SDK injects the status blob into the stream as a user_message — both as a
+    // stale first row and as the trailing last row here, so neither preview slot may
+    // pick it (the raw XML leaked into every chat card otherwise).
+    await adapter.saveMessage('chat-note', 'user_message', { content: note }, 100);
+    await adapter.saveMessage('chat-note', 'user_message', { content: 'real question' }, 200);
+    await adapter.saveMessage('chat-note', 'assistant_message', { text: 'real answer' }, 300);
+    await adapter.saveMessage('chat-note', 'user_message', { content: note }, 400);
+
+    const previews = await adapter.getChatsWithPreviews(USER, 50, 0);
+    const chat = previews.find((p) => p.id === 'chat-note')!;
+    expect(chat.message_count).toBe(4); // notification rows still count
+    expect(chat.first_message_data).toEqual({ content: 'real question' });
+    expect(chat.last_message_data).toEqual({ text: 'real answer' });
+  });
+
   it('updates chat metadata fields', async () => {
     await adapter.saveChat({
       userId: USER,

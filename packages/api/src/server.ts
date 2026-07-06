@@ -1,6 +1,7 @@
 // NOTE: .env is loaded by @vgit2/shared/constants before any imports
 import './utils/logger'; // Must be first to override console methods
 import { execSync } from 'child_process';
+import crypto from 'crypto';
 import fs from 'fs';
 import http from 'http';
 import path, { dirname } from 'path';
@@ -32,9 +33,11 @@ import { LocalSecretsAdapter } from './db/LocalSecretsAdapter.js';
 import { LocalSecretsVaultAdapter } from './db/LocalSecretsVaultAdapter.js';
 import { SecretsVaultAdapter } from './db/SecretsVaultAdapter.js';
 import { SqliteDbAdapter } from './db/SqliteDbAdapter/index.js';
+import { createE2eEnforcementMiddleware } from './middleware/e2eEnforcement.js';
 import { createJwtAuthMiddleware } from './middleware/jwtAuth.js';
 import { createApiRoutes } from './routes/api.routes.js';
 import { createAuthRoutes } from './routes/auth.routes.js';
+import { createE2eRoutes, createLoopbackDispatch } from './routes/subroutes/e2e.routes.js';
 import { createInternalRoutes } from './routes/subroutes/internal.routes.js';
 import { createStopOnPcRoutes } from './routes/subroutes/stop-on-pc.routes.js';
 import { createTunnelApiRoutes } from './routes/subroutes/tunnel-api.routes.js';
@@ -48,6 +51,7 @@ import { ChatService } from './services/ChatService.js';
 import { ClaudeService } from './services/ClaudeService.js';
 import { ConnectionsService } from './services/ConnectionsService.js';
 import { DeviceTokenService } from './services/DeviceTokenService.js';
+import { E2eSessionService } from './services/E2eSessionService.js';
 import { ExternalTranscriptFollowerService } from './services/ExternalTranscriptFollowerService.js';
 import { GitHubApiService } from './services/GitHubApiService.js';
 import { GitLocalService } from './services/GitLocalService.js';
@@ -152,6 +156,12 @@ class Server {
 
   // Local-first device-token mint/validate gate — the per-request gate.
   private deviceTokenService?: DeviceTokenService;
+  // E2E encryption sessions (portable.dev#13): PSK-authenticated X25519
+  // handshakes + per-session directional keys (PORTABLE_E2E_PSK from the launcher).
+  private e2eSessionService = new E2eSessionService();
+  // Per-boot secret the E2E loopback dispatch stamps so the enforcement
+  // middleware trusts the decrypted-tunnel replay (never leaves the process).
+  private e2eInnerSecret = crypto.randomBytes(32).toString('hex');
   // Local-first AI credentials: Claude subscription OAuth / ANTHROPIC_API_KEY,
   // resolved locally.
   private localAiCredentialsService?: LocalAiCredentialsService;
@@ -653,6 +663,11 @@ class Server {
     // Inject SocketIOService into ClaudeService (after both are created to avoid circular dependency)
     this.claudeService.setSocketIOService(this.socketIOService);
 
+    // E2E encryption (portable.dev#13): share the SAME session service the HTTP
+    // tunnel uses, so a session the phone established over `POST /api/e2e/handshake`
+    // is resolvable by its Socket.IO handshake (`e2eSid`) for per-frame encryption.
+    this.socketIOService.setE2eSessionService(this.e2eSessionService);
+
     // Initialize the idle session reaper: proactively frees the
     // subprocess of a multi-turn session left idle past CLAUDE_SESSION_IDLE_TTL_MS
     // (default 10 min). session_id is preserved so the next message resumes
@@ -827,9 +842,35 @@ class Server {
     // Local-first: pass the DeviceTokenService so the device token —
     // not a Clerk JWT — is the per-request gate (the remote TokenValidationService
     // was retired; validation is local).
+    // E2E enforcement (portable.dev#13, hard cutover): once PORTABLE_E2E_PSK is
+    // set, reject any plaintext `/api/*` request (except health/e2e/internal/
+    // media) — even one with a valid Bearer — so a malicious relay can't replay
+    // the visible token in the clear. Mounted BEFORE the JWT gate; the decrypted
+    // tunnel replay carries the per-boot inner secret and passes.
+    this.app.use(
+      '/api',
+      createE2eEnforcementMiddleware(this.e2eSessionService, this.e2eInnerSecret)
+    );
+
     const jwtMiddleware = createJwtAuthMiddleware(this.deviceTokenService);
     this.app.use('/api', jwtMiddleware);
     this.app.use('/auth', jwtMiddleware);
+
+    // E2E encryption (portable.dev#13): the PSK-authenticated handshake
+    // (`/api/e2e/handshake`, public via PUBLIC_ROUTES — the MAC is the auth)
+    // and the HTTP full tunnel (`/api/e2e`, behind the JWT gate). The tunnel
+    // decrypts the phone's envelope and replays the REAL request against this
+    // api over loopback, so every middleware applies to the inner request.
+    this.app.use(
+      '/api',
+      createE2eRoutes(
+        this.e2eSessionService,
+        createLoopbackDispatch(
+          () => `http://127.0.0.1:${DEV_BACKEND_PORT || VGIT_PORT}`,
+          this.e2eInnerSecret
+        )
+      )
+    );
 
     // Auth routes
     this.app.use(

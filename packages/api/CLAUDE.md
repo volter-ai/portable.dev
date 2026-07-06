@@ -423,6 +423,33 @@ ${GATEWAY_URL}/api/verify-handshake` (reports the gateway's `VERIFY_HANDSHAKE` e
   `src/constants/outdatedClient.ts`; gate: `src/services/HandshakeVerificationGate.ts`; gateway
   route + env flag: `packages/gateway/src/routes/version.ts` (`/api/verify-handshake`).
 
+## End-to-end encryption (portable.dev#13)
+
+All phone↔PC content is E2E-encrypted; the relay forwards only opaque ciphertext (sees pcId +
+JWT identity, never bodies/frames). Key pieces:
+
+- **`E2eSessionService`** holds the PSK (`PORTABLE_E2E_PSK`, from the launcher/QR) and answers
+  the phone's PSK-authenticated X25519 handshakes (`@vgit2/shared/e2e`), caching per-session
+  directional keys (sliding TTL). ONE instance is shared by the HTTP tunnel + the socket layer.
+- **HTTP full tunnel** — `routes/subroutes/e2e.routes.ts`: `POST /api/e2e/handshake` (PUBLIC,
+  the MAC is the auth) + `POST /api/e2e` (JWT-gated) decrypts the inner `{method,path,headers,
+body}` and **replays it over loopback** (`createLoopbackDispatch`) so every middleware
+  applies, then encrypts `{status,headers,body}` back.
+- **Socket.IO per-frame** — `services/socketE2e.ts` (`installServerSocketE2e`) wraps
+  `socket.packet` (seals outbound EVENT/ACK with s2c — the one chokepoint for direct emits AND
+  room broadcasts) + `socket.use` (opens inbound c2s). `SocketIOService.setupAuth` resolves the
+  session from the handshake `e2eSid`.
+- **Enforcement (hard cutover)** — `middleware/e2eEnforcement.ts`: when `PORTABLE_E2E_PSK` is
+  set, a plaintext protected `/api/*` request is **426** `e2e_required` (even with a valid
+  Bearer) unless it carries the per-boot inner-secret header (stamped only by the loopback
+  replay — the relay can't forge it). The socket handshake rejects a missing/invalid `e2eSid`.
+  **Exempt** (documented plaintext): health/version probes, `/api/e2e*`, `/api/internal/*`, and
+  binary media/raw-file/`/api/upload` (native-loader / multipart — the remaining follow-up).
+- Tests: `tests/integration/routes/e2e-routes.test.ts` (handshake + tunnel),
+  `tests/integration/routes/e2e-enforcement.test.ts`, `tests/unit/services/socketE2e.test.ts`;
+  crypto core in `packages/shared/tests/e2e-*.test.ts`. Real-wire socket interop is device-
+  deferred smoke (Bun+ws). Full model: `docs/security/confidentiality-model.md`.
+
 ## Backend Don'ts
 
 - **Add business logic to routes** — routes should ONLY delegate to services.

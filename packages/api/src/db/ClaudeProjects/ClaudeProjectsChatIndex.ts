@@ -24,6 +24,7 @@ import {
   transcriptTitle,
   transcriptToMessages,
 } from './transcriptReader.js';
+import { pickPreviewRows } from '../previewRows.js';
 
 export interface DiscoveredChat {
   /** session id == the transcript filename; used as the chat id when there is no row. */
@@ -114,8 +115,8 @@ export class ClaudeProjectsChatIndex {
     }
     const lines = parseTranscript(raw);
     const rows = transcriptToMessages(lines);
-    const firstUser = rows.find((r) => r.type === 'user_message');
-    const last = rows.length ? rows[rows.length - 1] : undefined;
+    // Skip injected task-notification rows as preview candidates (public issue #11).
+    const { firstUserMessage: firstUser, lastMessage: last } = pickPreviewRows(rows);
     const entry: CacheEntry = {
       mtimeMs,
       cwd: transcriptCwd(lines),

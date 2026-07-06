@@ -7,9 +7,11 @@
  * - `createSocket`  — configured Socket.IO client factory (platform opts injected)
  * - `emitters`      — named emit helpers (pure wire primitives)
  * - `consolidation` — message dedup + tool-block consolidation (pure)
+ * - `e2eSocket`     — client-side E2E frame wrapper (portable.dev#13)
  */
 
 export * from './events.js';
 export * from './createSocket.js';
 export * from './emitters.js';
 export * from './consolidation.js';
+export * from './e2eSocket.js';

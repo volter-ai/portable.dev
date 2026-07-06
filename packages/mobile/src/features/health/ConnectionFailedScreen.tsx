@@ -25,25 +25,33 @@
  * different `JWT_SECRET`, the gateway registration lapsed, …), reusing it loops
  * forever — "Try again" re-checks the SAME dead pairing, and bouncing out of the
  * re-scan left the bad credentials in place. So the recovery flow drops them:
- *   - RE-SCANNING clears the stale pairing FIRST ({@link clearPcPairing}) then saves
- *     the fresh QR's JWT, so the app can never keep reusing the invalid credentials.
+ *   - RE-SCANNING uses the shared {@link PcConnectModal} default ({@link resetAndLinkPc}):
+ *     it clears the stale pairing FIRST then saves the fresh QR's JWT **and** E2E key,
+ *     so the app can never keep reusing the invalid credentials (and a re-pair always
+ *     provisions the E2E key — the bug the old per-screen copy shipped).
  *   - CANCELLING the re-scan does a full {@link disconnectPc} — clears the pairing AND
  *     signals the gate back to the "Connect your PC" landing, instead of returning to
  *     this same dead screen with the same bad credentials.
  *
+ * LOG OUT (the always-available escape): this screen can dead-end BELOW the sign-out
+ * entries on Home/Settings, so it owns its own "Log out" exit. It runs the SAME wipe
+ * the rest of the app does — `forceSignOut` clears every local credential + user data
+ * (incl. the persisted Clerk client JWT, the no-hook wipe the boot gates use) — then
+ * routes to `/sign-in`. Available in BOTH failure modes (logging out clears local data
+ * and works offline).
+ *
  * Near-presentational: it reads no store; the only local state is the re-scan
- * modal's open flag, so it still renders deterministically under RNTL. The two
- * cleanup actions are injectable seams (`pcConnect.link` / `onDisconnect`).
+ * modal's open flag, so it still renders deterministically under RNTL. The
+ * cleanup actions are injectable seams (`pcConnect.link` / `onDisconnect` /
+ * `onLogout`), and the `forceSignOut` + router default is lazy-required so the
+ * component's static graph (and its RNTL tests) stay clerk-free.
  */
 
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { QrLinkPayload } from '@vgit2/shared/types';
-
 import { Icon, useAppTheme } from '../../theme';
-import { saveDeviceToken } from '../pc-connect/deviceTokenStore';
-import { clearPcPairing, disconnectPc } from '../pc-connect/disconnectPc';
+import { disconnectPc } from '../pc-connect/disconnectPc';
 import { PcConnectModal, type PcConnectModalProps } from '../pc-connect/PcConnectModal';
 
 import type { ConnectionFailedReason } from './connectionFailedStore';
@@ -64,6 +72,12 @@ export interface ConnectionFailedScreenProps {
    * the connected pcId + its rejected JWT, then signals `PcConnectGateHost`).
    */
   onDisconnect?: () => void;
+  /**
+   * Seam: full local logout — wipe every credential + user data, then route to
+   * sign-in. Default: {@link forceSignOut} (incl. the persisted Clerk client JWT)
+   * + `router.replace('/sign-in')`, both lazy-required (tests inject a spy).
+   */
+  onLogout?: () => void;
 }
 
 const COPY: Record<ConnectionFailedReason, { title: string; body: string }> = {
@@ -83,6 +97,7 @@ export function ConnectionFailedScreen({
   retrying = false,
   pcConnect,
   onDisconnect,
+  onLogout,
 }: ConnectionFailedScreenProps) {
   const { title, body } = COPY[reason];
   const { theme } = useAppTheme();
@@ -92,13 +107,9 @@ export function ConnectionFailedScreen({
   // connect landing (vs. bouncing back to this same screen with bad credentials).
   const doDisconnect = onDisconnect ?? (() => void disconnectPc());
 
-  // Re-scan from this stuck screen DROPS the stale, rejected pairing first, then
-  // saves the fresh QR's JWT — so "scanning again" can never keep reusing the
-  // invalid credentials. (Tests inject `pcConnect.link` to bypass the real clear.)
-  const linkClearingStale = async (payload: QrLinkPayload) => {
-    await clearPcPairing();
-    await saveDeviceToken(payload.pcId, payload.token);
-  };
+  // Log out = wipe every local credential + user data (same as everywhere) and
+  // route to sign-in. Lazy-required default so the static graph stays clerk-free.
+  const doLogout = onLogout ?? (() => void runLocalLogout());
 
   return (
     <View
@@ -156,9 +167,18 @@ export function ConnectionFailedScreen({
         />
       )}
 
+      <Pressable
+        testID="connection-failed-logout"
+        accessibilityRole="button"
+        style={styles.logoutButton}
+        onPress={doLogout}
+      >
+        <Text style={[styles.logoutText, { color: theme.colors.textSecondary }]}>Log out</Text>
+      </Pressable>
+
       <PcConnectModal
         visible={connectPcOpen}
-        link={pcConnect?.link ?? linkClearingStale}
+        link={pcConnect?.link}
         connect={pcConnect?.connect}
         renderScanner={pcConnect?.renderScanner}
         onConnected={() => {
@@ -207,4 +227,31 @@ const styles = StyleSheet.create({
   secondaryText: { fontSize: 15, fontWeight: '600' },
   buttonDisabled: { opacity: 0.5 },
   spinner: { marginTop: 4 },
+  logoutButton: {
+    marginTop: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+  },
+  logoutText: { fontSize: 14, fontWeight: '600' },
 });
+
+/**
+ * Default logout: the shared {@link forceSignOut} wipe (every local credential +
+ * user data, incl. the persisted Clerk client JWT — the no-hook wipe the boot
+ * gates use, since this screen has no `useClerk` context) then route to
+ * `/sign-in`. Both `forceSignOut` and `expo-router` are lazy-required so this
+ * component's static import graph — and its clerk-free RNTL tests — are unchanged.
+ */
+async function runLocalLogout(): Promise<void> {
+  try {
+    const { forceSignOut } =
+      require('../auth/forceSignOut') as typeof import('../auth/forceSignOut');
+    await forceSignOut({ clearClerkClientJwt: true });
+  } finally {
+    // Route to sign-in regardless — the local wipe already dropped the creds, so
+    // the sign-in gate will hold even if the (best-effort) wipe partially failed.
+    const { router } = require('expo-router') as typeof import('expo-router');
+    router.replace('/sign-in');
+  }
+}

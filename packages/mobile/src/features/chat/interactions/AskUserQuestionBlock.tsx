@@ -17,7 +17,7 @@
  */
 
 import type { AskUserQuestion } from '@vgit2/shared/types';
-import { memo, useState } from 'react';
+import { memo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useAppTheme, withAlpha } from '../../../theme';
@@ -29,16 +29,28 @@ export interface AskUserQuestionBlockProps {
   requestId: string;
   /** Submit the validated answers (question index as string → selected labels). */
   onAnswer: (answers: Record<string, string[]>) => void;
+  /**
+   * Called when an "Other" free-text input gains focus, with the input's native
+   * node. The prompt renders inside the transcript scroller (issue #10), so
+   * keyboard avoidance is a SCROLL concern: the owner scrolls the node into the
+   * list's visible window above the keyboard.
+   */
+  onOtherInputFocus?: (input: TextInput | null) => void;
 }
 
 export const AskUserQuestionBlock = memo(function AskUserQuestionBlock({
   questions,
   onAnswer,
+  onOtherInputFocus,
 }: AskUserQuestionBlockProps) {
   const [selections, setSelections] = useState<Record<string, string[]>>({});
   const [customTexts, setCustomTexts] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Per-question "Other" input nodes, keyed like `selections` — handed to
+  // `onOtherInputFocus` so the transcript list can measure + scroll to the one
+  // that gained focus.
+  const otherInputRefs = useRef<Record<string, TextInput | null>>({});
   const { theme } = useAppTheme();
 
   const wrapperStyle = [
@@ -165,6 +177,9 @@ export const AskUserQuestionBlock = memo(function AskUserQuestionBlock({
             </Pressable>
             {otherSelected ? (
               <TextInput
+                ref={(r) => {
+                  otherInputRefs.current[key] = r;
+                }}
                 testID={`ask-other-input-${i}`}
                 style={[
                   styles.otherInput,
@@ -178,6 +193,7 @@ export const AskUserQuestionBlock = memo(function AskUserQuestionBlock({
                 placeholderTextColor={theme.colors.textTertiary}
                 value={customTexts[key] ?? ''}
                 onChangeText={(t) => setCustomTexts((prev) => ({ ...prev, [key]: t }))}
+                onFocus={() => onOtherInputFocus?.(otherInputRefs.current[key])}
               />
             ) : null}
           </View>

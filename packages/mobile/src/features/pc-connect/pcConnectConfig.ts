@@ -22,7 +22,8 @@ import { getAuthToken } from '../auth/secureAuthStore';
 
 import { connectToPc } from './connectToPc';
 import { getConnectedPcId } from './connectedPcStore';
-import { saveDeviceToken } from './deviceTokenStore';
+import { getE2eKey } from './deviceTokenStore';
+import { linkPc } from './linkPc';
 
 import type { MobileRnAppleReviewerCredentialsResponse, QrLinkPayload } from '@vgit2/shared/types';
 
@@ -38,6 +39,16 @@ export interface PcConnectConfig {
    */
   getConnectedPcId?: () => Promise<string | null>;
   /**
+   * Read the per-PC E2E pre-shared key (base64), or null when this device never
+   * stored one for `pcId`. Default: the SecureStore reader. Used by the host to
+   * self-heal the E2E migration gap (portable.dev#13): a device paired BEFORE
+   * E2E existed holds a JWT for its pcId but no e2eKey, and since E2E is
+   * mandatory on the relay data path EVERY `/api/*` request would then throw
+   * deep in the app — so a returning device missing the key is routed back to
+   * the QR scanner instead of dead-ending.
+   */
+  getE2eKey?: (pcId: string) => Promise<string | null>;
+  /**
    * Connect to a PC this device already holds a data-path JWT for.
    * Resolves `true` when the app is now pointed at the PC (the stable relay base
    * is live), `false` when the PC is unreachable / unlinked (stay on the scanner).
@@ -50,12 +61,14 @@ export interface PcConnectConfig {
   onLink: (payload: QrLinkPayload) => Promise<void>;
   /**
    * OPTIONAL Apple-reviewer fast path: when this device holds no connected
-   * PC, the host calls this BEFORE mounting the QR scanner. A `200` triple
-   * (`{ gatewayBase, pcId, token }` — the SAME shape the QR carries) lets the
-   * dedicated App-Store reviewer connect WITHOUT scanning; `null` (a `403`
-   * non-reviewer / any error) falls through to the normal QR gate. Omitted (or
-   * always-`null`) ⇒ the non-reviewer flow is byte-identical. Injectable so tests
-   * never pull `@clerk/clerk-expo` into the graph.
+   * PC (or holds a pairing missing its E2E key, portable.dev#15), the host calls
+   * this BEFORE mounting the QR scanner. A `200` payload
+   * (`{ gatewayBase, pcId, token, e2eKey }` — the SAME shape the QR carries) lets
+   * the dedicated App-Store reviewer connect WITHOUT scanning; `null` (a `403`
+   * non-reviewer / any error) — or a keyless response, which the host refuses to
+   * link (unusable under mandatory E2E) — falls through to the normal QR gate.
+   * Omitted (or always-`null`) ⇒ the non-reviewer flow is byte-identical.
+   * Injectable so tests never pull `@clerk/clerk-expo` into the graph.
    */
   getReviewerCredentials?: () => Promise<MobileRnAppleReviewerCredentialsResponse | null>;
 }
@@ -69,13 +82,18 @@ export interface PcConnectConfig {
 export function buildPcConnectConfig(): PcConnectConfig {
   return {
     getConnectedPcId,
+    getE2eKey,
     onConnect: async (pcId: string) => {
       const result = await connectToPc(pcId, { gatewayBase: getGatewayUrl() });
       return result.ready;
     },
-    onLink: async (payload: QrLinkPayload) => {
-      await saveDeviceToken(payload.pcId, payload.token);
-    },
+    // Boot/gate pairing is save-only via the SINGLE canonical linkPc (JWT + the
+    // QR-carried E2E pre-shared key — the phone's half of the E2E trust bootstrap,
+    // portable.dev#13). It does NOT clear first (unlike the in-app re-scan's
+    // resetAndLinkPc): a first pairing / a post-disconnect one has nothing stale
+    // to drop. Every caller carries the E2E key — the QR requires it and the host
+    // aborts a keyless reviewer bypass (portable.dev#15).
+    onLink: (payload: QrLinkPayload) => linkPc(payload).then(() => {}),
     // Apple-reviewer fast path: read the persisted authToken and ask the
     // gateway whether the signed-in account is the dedicated reviewer. A non-reviewer
     // gets a `403` (→ GatewayHttpError) which we swallow to `null` so the host falls

@@ -25,8 +25,12 @@
  */
 
 import type { GatewayClient } from '../../services/gatewayClient';
+import { getConnectedPcId } from '../pc-connect/connectedPcStore';
+import { getE2eKey } from '../pc-connect/deviceTokenStore';
 import { createAuthedFetch, type AuthedFetch, NoAuthTokenError } from '../auth/authedFetch';
 import { BaseUrlResolver, NoRelayUrlError } from './baseUrls';
+import { createE2eFetch, type E2eFetch, type E2eResponseLike } from './e2eTransport';
+import { getRelayUrl } from './relayUrlStore';
 
 // `NoRelayUrlError` is now owned by the dual base-URL source-of-truth
 // (`baseUrls.ts`); re-export it so existing importers keep working.
@@ -63,6 +67,19 @@ export interface RelayApiClientOptions {
    * data-path JWT (keyed by the connected pcId) and skip the legacy `/refresh`.
    */
   persistRenewedToken?: (token: string) => Promise<void>;
+  /**
+   * E2E full tunnel (portable.dev#13). Enable it (the production `ApiProvider`
+   * passes `e2e: {}`) to seal every JSON `/api/*` request inside an AEAD
+   * envelope POSTed to `POST /api/e2e`, so the relay never sees method/path/body.
+   * Omitted → the bare authed transport (unit tests that assert raw plaintext;
+   * a real PC REJECTS plaintext once Phase 5 enforcement lands, so production
+   * MUST enable it). Provide the seams to inject test doubles.
+   */
+  e2e?: {
+    getPcId?: () => Promise<string | null>;
+    getE2eKey?: (pcId: string) => Promise<string | null>;
+    getRelayBase?: () => Promise<string>;
+  };
 }
 
 /** A multipart-capable request body. */
@@ -79,6 +96,11 @@ type RequestBody =
 export class RelayApiClient {
   private readonly authedFetch: AuthedFetch;
   private readonly baseUrls: BaseUrlResolver;
+  /**
+   * JSON transport: the E2E tunnel wrapping `authedFetch` (production), or the
+   * bare `authedFetch` when E2E is disabled (`e2e: false`, some tests).
+   */
+  private readonly jsonFetch: E2eFetch | AuthedFetch;
 
   constructor(opts: RelayApiClientOptions) {
     // Route through the dual base-URL source-of-truth: `/api/*`
@@ -93,6 +115,21 @@ export class RelayApiClient {
       onTokenRefreshed: opts.onTokenRefreshed,
       persistRenewedToken: opts.persistRenewedToken,
     });
+
+    if (opts.e2e) {
+      // E2E tunnel (portable.dev#13): the AEAD envelope rides `authedFetch`, so
+      // the outer Bearer + X-Renewed-Token renewal keep working while the relay
+      // sees only opaque ciphertext for the inner method/path/body.
+      this.jsonFetch = createE2eFetch({
+        outerFetch: this.authedFetch,
+        getPcId: opts.e2e.getPcId ?? getConnectedPcId,
+        getE2eKey: opts.e2e.getE2eKey ?? getE2eKey,
+        getRelayBase: opts.e2e.getRelayBase ?? (async () => (await getRelayUrl()) ?? ''),
+      });
+    } else {
+      // Tunnel not enabled — JSON goes straight over the authed transport.
+      this.jsonFetch = this.authedFetch;
+    }
   }
 
   /** Resolve a relative path to an absolute URL (passes absolute URLs through). */
@@ -104,15 +141,22 @@ export class RelayApiClient {
     const url = await this.resolveUrl(path);
 
     const init: RequestInit = { method };
+    // Multipart uploads (file bytes) currently ride the direct authed transport,
+    // NOT the E2E tunnel — RN `FormData` isn't envelope-serializable. This is the
+    // one content surface (alongside binary media DOWNLOAD, which native loaders
+    // fetch) still visible to the relay; tracked as a follow-up in the issue.
+    let res: E2eResponseLike | Response;
     if (body?.formData !== undefined) {
       // Multipart: leave Content-Type unset so RN appends the boundary.
       init.body = body.formData;
-    } else if (body?.json !== undefined) {
-      init.headers = { 'Content-Type': 'application/json' };
-      init.body = JSON.stringify(body.json);
+      res = await this.authedFetch(url, init);
+    } else {
+      if (body?.json !== undefined) {
+        init.headers = { 'Content-Type': 'application/json' };
+        init.body = JSON.stringify(body.json);
+      }
+      res = await this.jsonFetch(url, init);
     }
-
-    const res = await this.authedFetch(url, init);
     if (!res.ok) {
       let message = `Request failed (${res.status})`;
       let parsed: unknown;

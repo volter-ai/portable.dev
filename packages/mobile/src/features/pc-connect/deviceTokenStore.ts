@@ -25,6 +25,9 @@ import * as SecureStore from 'expo-secure-store';
 /** SecureStore key prefix for a per-PC data-path credential (the JWT). */
 export const DEVICE_TOKEN_KEY_PREFIX = 'portable.deviceToken.';
 
+/** SecureStore key prefix for a per-PC E2E pre-shared key (base64, from the QR). */
+export const E2E_KEY_PREFIX = 'portable.e2eKey.';
+
 /**
  * expo-secure-store keys must match `[A-Za-z0-9._-]+`, but a `pcId` is opaque
  * (`pc_<uuid>` today, but never assume) — sanitize any other char so an exotic
@@ -55,7 +58,38 @@ export async function hasDeviceToken(pcId: string): Promise<boolean> {
   return (await getDeviceToken(pcId)) !== null;
 }
 
-/** Remove the data-path JWT for `pcId` (revoked / re-link). */
+/** Remove the data-path JWT for `pcId` (revoked / re-link) AND its E2E key. */
 export async function clearDeviceToken(pcId: string): Promise<void> {
   await SecureStore.deleteItemAsync(keyForPc(pcId));
+  // The E2E PSK is only useful alongside the JWT — drop them together so every
+  // existing clear path (disconnect, recovery re-scan) also forgets the key.
+  try {
+    await SecureStore.deleteItemAsync(e2eKeyForPc(pcId));
+  } catch {
+    /* best-effort — a stale E2E key is harmless without the pairing */
+  }
+}
+
+/**
+ * The E2E pre-shared key from the pairing QR (`QrLinkPayload.e2eKey`,
+ * portable.dev#13). Same per-PC keychain treatment as the JWT: it is a SECRET
+ * (anyone holding it + the JWT could impersonate the phone end-to-end).
+ */
+function e2eKeyForPc(pcId: string): string {
+  return `${E2E_KEY_PREFIX}${pcId.replace(/[^A-Za-z0-9._-]/g, '_')}`;
+}
+
+/** Persist the per-PC E2E pre-shared key (written on a successful link). */
+export async function saveE2eKey(pcId: string, e2eKey: string): Promise<void> {
+  await SecureStore.setItemAsync(e2eKeyForPc(pcId), e2eKey);
+}
+
+/** Read the per-PC E2E pre-shared key (null when this device never linked it). */
+export async function getE2eKey(pcId: string): Promise<string | null> {
+  try {
+    return await SecureStore.getItemAsync(e2eKeyForPc(pcId));
+  } catch {
+    // Corrupt/undecryptable → treat as absent (the user re-links via QR).
+    return null;
+  }
 }

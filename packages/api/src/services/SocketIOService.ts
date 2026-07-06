@@ -5,10 +5,13 @@ import { DevicePresenceStore, PairingStateStore, type DeviceInfo } from '@vgit2/
 import { Server, Socket } from 'socket.io';
 
 import { SocketEmitter } from './emitters/SocketEmitter.js';
+import { emitToAllSockets, emitToRoom } from './socketBroadcast.js';
+import { installServerSocketE2e } from './socketE2e.js';
 
 import type { AuthService } from './AuthService.js';
 import type { ChatService } from './ChatService.js';
 import type { ClaudeService } from './ClaudeService.js';
+import type { E2eSessionService } from './E2eSessionService.js';
 import type { GitLocalService } from './GitLocalService.js';
 import type { TunnelService } from './TunnelService.js';
 import type { DbAdapter } from '../db/DbAdapter.js';
@@ -46,6 +49,15 @@ export class SocketIOService {
   // connect/disconnect from the current Socket.IO connections. The launcher polls
   // it to drive the connected menu's right-hand device column. See @vgit2/shared/secrets.
   private readonly devicePresence = new DevicePresenceStore();
+
+  // E2E encryption (portable.dev#13): resolves the phone's per-session keys from
+  // the handshake-supplied `e2eSid`. Injected post-construction by server.ts.
+  private e2eSessionService?: E2eSessionService;
+
+  /** Wire the E2E session service (portable.dev#13). Call once after construction. */
+  setE2eSessionService(service: E2eSessionService): void {
+    this.e2eSessionService = service;
+  }
 
   constructor(
     httpServer: HttpServer,
@@ -145,6 +157,23 @@ export class SocketIOService {
         socket.data.username = authResult.username;
         socket.data.token = token; // JWT auth token
 
+        // E2E encryption (portable.dev#13): resolve the phone's per-session keys
+        // from the handshake-supplied `e2eSid` (the phone established the session
+        // over the HTTP handshake first). When E2E is configured (PORTABLE_E2E_PSK
+        // set) a valid session is REQUIRED — a socket without one is rejected so
+        // the live chat stream can never fall back to plaintext.
+        if (this.e2eSessionService?.isConfigured()) {
+          const sid =
+            typeof socket.handshake.auth.e2eSid === 'string'
+              ? socket.handshake.auth.e2eSid
+              : undefined;
+          const keys = sid ? this.e2eSessionService.getSessionKeys(sid) : undefined;
+          if (!keys) {
+            return next(new Error('E2E session required'));
+          }
+          socket.data.e2eKeys = keys;
+        }
+
         // Outdated-client detection: capture the handshake-reported app
         // version. Up-to-date clients (native) send `appVersion`;
         // pre-handshake native builds send nothing and are blocked at `chat:message`
@@ -183,6 +212,13 @@ export class SocketIOService {
   private setupEventHandlers() {
     this.io.on('connection', async (socket: Socket) => {
       const { userEmail } = socket.data;
+
+      // E2E encryption (portable.dev#13): install the per-frame seal/open FIRST,
+      // before any handler binds or any emit fires, so every frame on this socket
+      // is encrypted in both directions. Keys were resolved in the handshake.
+      if (socket.data.e2eKeys) {
+        installServerSocketE2e(socket, socket.data.e2eKeys);
+      }
       // Per-connection log is opt-in via PORTABLE_DEBUG (set by `portable start
       // --debug`) so the launcher can stream "a device just connected" to the
       // terminal without this firing on every connect in normal runs.
@@ -544,7 +580,7 @@ export class SocketIOService {
           }
 
           // Broadcast user message immediately (echo the client's messageId for deduplication)
-          this.io.to(effChatId).emit('user_message', {
+          emitToRoom(this.io, effChatId, 'user_message', {
             chatId: effChatId,
             id: messageId, // Echo the ID from the client
             content: prepared.effectiveContent,
@@ -586,8 +622,11 @@ export class SocketIOService {
               console.error(`[SocketIO] ChatExecutionService error:`, error);
 
               // Emit error to clients (transport concern)
-              this.io.to(effChatId).emit('claude:status', { chatId: effChatId, status: 'error' });
-              this.io.to(effChatId).emit('claude:error', {
+              emitToRoom(this.io, effChatId, 'claude:status', {
+                chatId: effChatId,
+                status: 'error',
+              });
+              emitToRoom(this.io, effChatId, 'claude:error', {
                 chatId: effChatId,
                 error: error.message || 'Failed to process message',
               });
@@ -739,7 +778,7 @@ export class SocketIOService {
           // This will be integrated with ClaudeService
 
           // Notify room
-          this.io.to(chatId).emit('secrets:submitted', { chatId });
+          emitToRoom(this.io, chatId, 'secrets:submitted', { chatId });
 
           callback?.({ success: true });
         } catch (error: any) {
@@ -811,7 +850,8 @@ export class SocketIOService {
    * Public method for services to broadcast to rooms
    */
   public broadcastToRoom(chatId: string, event: string, data: any) {
-    this.io.to(chatId).emit(event, data);
+    // Per-socket fan-out so each frame is E2E-sealed (see socketBroadcast.ts).
+    emitToRoom(this.io, chatId, event, data);
   }
 
   /**
@@ -955,7 +995,8 @@ export class SocketIOService {
       `[SocketIO] Broadcasting to all ${this.io.sockets.sockets.size} connected clients: ${event}`,
       data
     );
-    this.io.emit(event, data);
+    // Per-socket fan-out so each frame is E2E-sealed (see socketBroadcast.ts).
+    emitToAllSockets(this.io, event, data);
   }
 
   /**
@@ -966,7 +1007,8 @@ export class SocketIOService {
    */
   public broadcastSandboxMetrics(metrics: SandboxMetrics): void {
     if (this.io.sockets.sockets.size === 0) return;
-    this.io.emit('sandbox:metrics', metrics);
+    // Per-socket fan-out so each frame is E2E-sealed (see socketBroadcast.ts).
+    emitToAllSockets(this.io, 'sandbox:metrics', metrics);
   }
 
   /**

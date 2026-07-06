@@ -21,6 +21,8 @@
  * This module is PURE (no fs) so it is unit-tested against a golden fixture.
  */
 
+import { stripTaskNotifications } from '@vgit2/shared/utils/taskNotificationHelpers';
+
 import type { MessageRow } from '../JsonDbAdapter/JsonChatStore.js';
 
 /** A single parsed JSONL record (only the fields this reader reads are typed). */
@@ -257,7 +259,14 @@ export function transcriptTitle(lines: TranscriptLine[], maxLen = 120): string |
       typeof line.message?.content === 'string' &&
       !isSlashCommandContent(line.message.content)
     ) {
-      firstUser = line.message.content;
+      // An injected `<task-notification>` blob is machine context, never a title —
+      // a notification-only message strips to '' and keeps looking for the first
+      // HUMAN turn; an embedded one titles as the human part (public issue #11). The
+      // transcript content is a full JSONL line (a torn line fails JSON.parse and is
+      // dropped upstream), so the SDK blob is always complete → the STRICT strip is
+      // lossless and never chops a human title that merely mentions the marker.
+      const cleaned = stripTaskNotifications(line.message.content);
+      if (cleaned) firstUser = cleaned;
     }
   }
   const pick = customTitle ?? aiTitle ?? firstUser;

@@ -296,6 +296,61 @@ describe('rev9 D29b — title / cwd / empty helpers', () => {
     expect(transcriptTitle(noTitle)).toBe('just a question here');
   });
 
+  it('title skips a task-notification-only first user message (public issue #11)', () => {
+    const note = [
+      '<task-notification>',
+      '<task-id>bvt6pifet</task-id>',
+      '<status>killed</status>',
+      '<summary>Background command "Start dev server" was stopped</summary>',
+      '</task-notification>',
+    ].join('\n');
+    const lines = parseTranscript(
+      [
+        line({
+          type: 'user',
+          message: { role: 'user', content: note },
+          timestamp: '2026-06-25T19:30:00Z',
+          sessionId: SESSION,
+        }),
+        line({
+          type: 'user',
+          message: { role: 'user', content: 'fix the login bug' },
+          timestamp: '2026-06-25T19:31:00Z',
+          sessionId: SESSION,
+        }),
+      ].join('\n')
+    );
+    // The injected notification is machine context — the title falls to the human turn.
+    expect(transcriptTitle(lines)).toBe('fix the login bug');
+
+    // A human message with an EMBEDDED notification titles as the human part only.
+    const embedded = parseTranscript(
+      [
+        line({
+          type: 'user',
+          message: { role: 'user', content: `deploy this\n${note}` },
+          timestamp: '2026-06-25T19:32:00Z',
+          sessionId: SESSION,
+        }),
+      ].join('\n')
+    );
+    expect(transcriptTitle(embedded)).toBe('deploy this');
+
+    // A human title that merely MENTIONS an unclosed marker is preserved (transcript
+    // content is a full JSONL line, so a real blob is always complete → strict strip).
+    const mention = parseTranscript(
+      [
+        line({
+          type: 'user',
+          message: { role: 'user', content: 'why does <task-notification> leak?' },
+          timestamp: '2026-06-25T19:33:00Z',
+          sessionId: SESSION,
+        }),
+      ].join('\n')
+    );
+    expect(transcriptTitle(mention)).toBe('why does <task-notification> leak?');
+  });
+
   it('reads cwd from a conversational line (not the lossy dir slug)', () => {
     expect(transcriptCwd(parseTranscript(buildFixture()))).toBe(CWD);
     expect(transcriptCwd(parseTranscript(line({ type: 'ai-title', aiTitle: 'x' })))).toBeNull();

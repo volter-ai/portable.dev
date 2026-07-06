@@ -60,7 +60,15 @@ export {
   type UploadedAttachment,
 } from './attachments';
 
-export { MessageList, type MessageListProps } from './MessageList';
+export {
+  computeScrollIntoViewDelta,
+  MessageList,
+  type MeasurableNode,
+  type MeasuredRect,
+  type MeasureNode,
+  type MessageListHandle,
+  type MessageListProps,
+} from './MessageList';
 export { TypingIndicator, type TypingIndicatorProps } from './TypingIndicator';
 export { getAgentInfo, DEFAULT_AGENT_COLOR, type AgentInfo } from './agentInfo';
 export { transformBufferedMessage, transformBufferedMessages } from './messageTransformers';

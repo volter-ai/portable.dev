@@ -374,8 +374,9 @@ describe('TunnelRegistrationAgent heartbeat', () => {
 
 describe('TunnelRegistrationAgent reviewerToken (Apple-reviewer opt-in)', () => {
   const REVIEWER_JWT = 'header.payload.signature';
+  const REVIEWER_PSK = 'reviewer-psk-base64';
 
-  it('includes reviewerToken in the register body when opted in (re-sent on rotation)', async () => {
+  it('includes reviewerToken + reviewerE2eKey in the register body when opted in (re-sent on rotation)', async () => {
     const gw = makeFakeGateway(() => 200);
     const timer = makeManualTimer();
     const agent = new TunnelRegistrationAgent({
@@ -383,6 +384,7 @@ describe('TunnelRegistrationAgent reviewerToken (Apple-reviewer opt-in)', () => 
       label: 'reviewer-box',
       relayBaseUrl: RELAY,
       reviewerToken: REVIEWER_JWT,
+      reviewerE2eKey: REVIEWER_PSK,
       fetchImpl: gw.fetchImpl,
       setTimeoutImpl: timer.setTimeoutImpl,
       clearTimeoutImpl: timer.clearTimeoutImpl,
@@ -394,9 +396,13 @@ describe('TunnelRegistrationAgent reviewerToken (Apple-reviewer opt-in)', () => 
 
     const registers = gw.requests.filter((r) => r.url.endsWith('/tunnel/register'));
     expect(registers).toHaveLength(2);
-    // The published token rides on EVERY register, including the rotation re-register.
+    // The published token + E2E key ride on EVERY register, including the rotation
+    // re-register (the QR-skip path needs BOTH — a keyless triple is unusable under
+    // mandatory E2E, portable.dev#15).
     expect(registers[0].body.reviewerToken).toBe(REVIEWER_JWT);
     expect(registers[1].body.reviewerToken).toBe(REVIEWER_JWT);
+    expect(registers[0].body.reviewerE2eKey).toBe(REVIEWER_PSK);
+    expect(registers[1].body.reviewerE2eKey).toBe(REVIEWER_PSK);
     // The rest of the body is unchanged.
     expect(registers[0].body).toMatchObject({
       pcId: 'pc_reviewer',
@@ -406,14 +412,14 @@ describe('TunnelRegistrationAgent reviewerToken (Apple-reviewer opt-in)', () => 
     agent.stop();
   });
 
-  it('does NOT include reviewerToken by default (the invariant — a NORMAL PC never publishes its JWT)', async () => {
+  it('does NOT include reviewerToken/reviewerE2eKey by default (the invariant — a NORMAL PC never publishes its credentials)', async () => {
     const gw = makeFakeGateway(() => 200);
     const timer = makeManualTimer();
     const agent = new TunnelRegistrationAgent({
       pcId: 'pc_normal',
       label: 'my-mac',
       relayBaseUrl: RELAY,
-      // reviewerToken intentionally unset.
+      // reviewerToken/reviewerE2eKey intentionally unset.
       fetchImpl: gw.fetchImpl,
       setTimeoutImpl: timer.setTimeoutImpl,
       clearTimeoutImpl: timer.clearTimeoutImpl,
@@ -426,6 +432,8 @@ describe('TunnelRegistrationAgent reviewerToken (Apple-reviewer opt-in)', () => 
     expect(register).toBeDefined();
     expect('reviewerToken' in register!.body).toBe(false);
     expect(register!.body.reviewerToken).toBeUndefined();
+    expect('reviewerE2eKey' in register!.body).toBe(false);
+    expect(register!.body.reviewerE2eKey).toBeUndefined();
     agent.stop();
   });
 

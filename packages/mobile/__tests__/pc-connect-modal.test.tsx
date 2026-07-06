@@ -39,7 +39,12 @@ import type { QrLinkPayload } from '@vgit2/shared/types';
 
 import { ConnectionFailedScreen } from '../src/features/health/ConnectionFailedScreen';
 import { getConnectedPcId, saveConnectedPcId } from '../src/features/pc-connect/connectedPcStore';
-import { getDeviceToken, saveDeviceToken } from '../src/features/pc-connect/deviceTokenStore';
+import {
+  getDeviceToken,
+  getE2eKey,
+  saveDeviceToken,
+  saveE2eKey,
+} from '../src/features/pc-connect/deviceTokenStore';
 import {
   PcConnectModal,
   type PcConnectModalProps,
@@ -60,6 +65,7 @@ const PAYLOAD: QrLinkPayload = {
   gatewayBase: 'https://app.portable.dev',
   pcId: 'pc_x',
   token: 'pc-minted-jwt',
+  e2eKey: 'psk-base64',
 };
 
 /** A fake scanner that fires `onPayload(PAYLOAD)` when pressed (no camera). */
@@ -133,6 +139,33 @@ describe('PcConnectModal', () => {
     expect(link).toHaveBeenCalledWith(PAYLOAD);
     expect(connect).toHaveBeenCalledWith('pc_x');
     expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it('DEFAULT link (no seam): clears the stale pairing then saves the fresh JWT + E2E key', async () => {
+    // Seed a stale pairing — an old PC whose JWT + E2E key are now useless.
+    await saveConnectedPcId('pc_old');
+    await saveDeviceToken('pc_old', 'old-jwt');
+    await saveE2eKey('pc_old', 'old-psk');
+
+    // NO `link` injected → the modal runs its real resetAndLinkPc default. `connect`
+    // is a spy so it never touches the network / re-saves the connected pcId.
+    const connect = jest.fn(async () => ({ ready: true as const, deviceToken: 'jwt' }));
+    const { onConnected } = renderModal({ connect });
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('fake-scan'));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(onConnected).toHaveBeenCalledTimes(1));
+    expect(connect).toHaveBeenCalledWith('pc_x');
+    // Stale pairing fully wiped; the fresh QR's JWT AND E2E key persisted for pc_x —
+    // the E2E key is the half the old `saveDeviceToken`-only default dropped.
+    expect(await getConnectedPcId()).toBeNull();
+    expect(await getDeviceToken('pc_old')).toBeNull();
+    expect(await getE2eKey('pc_old')).toBeNull();
+    expect(await getDeviceToken('pc_x')).toBe('pc-minted-jwt');
+    expect(await getE2eKey('pc_x')).toBe('psk-base64');
   });
 
   it('scan → connect (unhealthy) → shows the error, then retry re-arms the scanner', async () => {
@@ -306,13 +339,16 @@ describe('ConnectionFailedScreen — "Connect PC" boot-stuck exit', () => {
     expect(onDisconnect).toHaveBeenCalledTimes(1);
   });
 
-  it('pc-down: re-scanning clears the stale pairing FIRST, then saves the fresh QR token', async () => {
-    // Seed a stale pairing — a now-dead PC whose JWT the relay rejects.
+  it('pc-down: re-scanning clears the stale pairing FIRST, then saves the fresh QR token + E2E key', async () => {
+    // Seed a stale pairing — a now-dead PC whose JWT the relay rejects, plus its
+    // (now-mismatched) E2E key.
     await saveConnectedPcId('pc_old');
     await saveDeviceToken('pc_old', 'old-rejected-jwt');
+    await saveE2eKey('pc_old', 'old-mismatched-psk');
 
-    // No `link` injected → the screen uses its real stale-clearing default; `connect`
-    // is a spy so it never reaches the network (and never re-saves the connected pcId).
+    // No `link` injected → the screen uses the shared resetAndLinkPc default via the
+    // modal; `connect` is a spy so it never reaches the network (and never re-saves
+    // the connected pcId).
     const connect = jest.fn(async () => ({ ready: true as const, deviceToken: 'jwt' }));
     render(
       <SafeAreaProvider initialMetrics={SAFE_AREA_METRICS}>
@@ -332,10 +368,37 @@ describe('ConnectionFailedScreen — "Connect PC" boot-stuck exit', () => {
     });
 
     await waitFor(() => expect(connect).toHaveBeenCalledWith('pc_x'));
-    // The stale pairing is wiped (pcId + the rejected token); only the fresh QR's
-    // token survives, keyed by the newly-scanned pcId.
+    // The stale pairing is wiped (pcId + the rejected token + the mismatched key);
+    // the fresh QR's JWT AND E2E key survive, keyed by the newly-scanned pcId — so a
+    // recovery re-pair never dead-ends on "No E2E key" again.
     expect(await getConnectedPcId()).toBeNull();
     expect(await getDeviceToken('pc_old')).toBeNull();
+    expect(await getE2eKey('pc_old')).toBeNull();
     expect(await getDeviceToken('pc_x')).toBe('pc-minted-jwt');
+    expect(await getE2eKey('pc_x')).toBe('psk-base64');
+  });
+
+  it('pc-down: "Log out" runs the injected logout seam (wipe + sign-in)', () => {
+    const onLogout = jest.fn();
+    render(
+      <SafeAreaProvider initialMetrics={SAFE_AREA_METRICS}>
+        <ConnectionFailedScreen reason="pc-down" onTryAgain={jest.fn()} onLogout={onLogout} />
+      </SafeAreaProvider>
+    );
+
+    fireEvent.press(screen.getByTestId('connection-failed-logout'));
+    expect(onLogout).toHaveBeenCalledTimes(1);
+  });
+
+  it('offline: "Log out" is available too (works offline, clears local data)', () => {
+    const onLogout = jest.fn();
+    render(
+      <SafeAreaProvider initialMetrics={SAFE_AREA_METRICS}>
+        <ConnectionFailedScreen reason="offline" onTryAgain={jest.fn()} onLogout={onLogout} />
+      </SafeAreaProvider>
+    );
+
+    fireEvent.press(screen.getByTestId('connection-failed-logout'));
+    expect(onLogout).toHaveBeenCalledTimes(1);
   });
 });

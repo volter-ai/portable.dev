@@ -50,6 +50,11 @@ describe('config: buildApiChildEnv / resolveApiPort', () => {
     expect(env.CLAUDE_LOG_DIR).toBeUndefined();
   });
 
+  it('forwards e2ePsk as PORTABLE_E2E_PSK (and leaves it unset otherwise)', () => {
+    expect(buildApiChildEnv({}, { e2ePsk: 'psk-base64' }).PORTABLE_E2E_PSK).toBe('psk-base64');
+    expect(buildApiChildEnv({}, {}).PORTABLE_E2E_PSK).toBeUndefined();
+  });
+
   it('sets PORTABLE_DEBUG=1 only when the debug override is on', () => {
     expect(buildApiChildEnv({}, {}).PORTABLE_DEBUG).toBeUndefined();
     expect(buildApiChildEnv({}, { debug: false }).PORTABLE_DEBUG).toBeUndefined();

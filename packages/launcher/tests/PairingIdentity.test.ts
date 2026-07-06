@@ -10,9 +10,11 @@ import { describe, expect, it } from 'bun:test';
 import { verifyAuthToken } from '@vgit2/shared/jwt';
 
 import {
+  ensureE2ePsk,
   ensureJwtSecret,
   mintPairingToken,
   resolvePairingIdentity,
+  E2E_PSK_KEY,
   JWT_SECRET_KEY,
 } from '../src/PairingIdentity.js';
 import { readStoredGitHubLogin } from '../src/Launcher.js';
@@ -52,6 +54,39 @@ describe('ensureJwtSecret', () => {
     expect((store as unknown as { map: Map<string, string> }).map.get(JWT_SECRET_KEY)).toBe(
       'operator-provided'
     );
+  });
+});
+
+describe('ensureE2ePsk', () => {
+  it('generates and persists a 32-byte base64 PSK on first boot', () => {
+    const store = makeStore();
+    const psk = ensureE2ePsk(store, {} as NodeJS.ProcessEnv);
+    // 32 random bytes → 44 base64 chars.
+    expect(Buffer.from(psk, 'base64').length).toBe(32);
+    expect((store as unknown as { map: Map<string, string> }).map.get(E2E_PSK_KEY)).toBe(psk);
+  });
+
+  it('reuses the persisted PSK across boots (a changed PSK would force a re-pair)', () => {
+    const store = makeStore();
+    const first = ensureE2ePsk(store, {} as NodeJS.ProcessEnv);
+    const second = ensureE2ePsk(store, {} as NodeJS.ProcessEnv);
+    expect(second).toBe(first);
+  });
+
+  it('prefers an explicit PORTABLE_E2E_PSK env and persists it', () => {
+    const store = makeStore();
+    const psk = ensureE2ePsk(store, { PORTABLE_E2E_PSK: 'operator-psk' } as NodeJS.ProcessEnv);
+    expect(psk).toBe('operator-psk');
+    expect((store as unknown as { map: Map<string, string> }).map.get(E2E_PSK_KEY)).toBe(
+      'operator-psk'
+    );
+  });
+
+  it('is independent of the JWT secret (separate store keys)', () => {
+    const store = makeStore();
+    const jwtSecret = ensureJwtSecret(store, {} as NodeJS.ProcessEnv);
+    const psk = ensureE2ePsk(store, {} as NodeJS.ProcessEnv);
+    expect(psk).not.toBe(jwtSecret);
   });
 });
 

@@ -189,15 +189,27 @@ loop, and an authenticated screen can never render outside `ApiProvider`.
   loading screen); the sign-in flow's `router.replace('/')` hands off. **Do NOT delete it** —
   it looks unused but the redirect URL targets it.
 
-### Force-update version gate (`src/features/version-update/`)
+### Version-update prompt (`src/features/version-update/`)
 
-Outermost gate. On cold start, if this build's `Constants.expoConfig?.version` is below the
-gateway minimum (`GET /api/min-version-v2`), it blocks behind a full-screen "Update Required"
-screen with a store button (`Linking.openURL` to the App Store / Play Store).
+Outermost gate — but it **never hard-blocks** (#1522). On cold start, if this build's
+`Constants.expoConfig?.version` is below the gateway minimum (`GET /api/min-version-v2`), the
+app renders normally UNDERNEATH a dismissible bank-style `UpdateAvailableCard` (whale mark +
+**Update** → `Linking.openURL` to the App Store / Play Store + **Later** → dismiss; Android
+back = Later). A "Later" persists a 24h snooze in the MMKV leaf `updatePromptStore`
+(`shouldShowUpdatePrompt`; device-level state, preserved by `forceSignOut` like
+`usageTrackingStore`), after which the card may reappear on a later cold start.
 `meetsMinimumVersion` compares **major.minor only** (patches are backwards-compatible);
-unparseable → **fail open** (an app ahead of the gateway is never blocked). `runVersionGate`
-does 3 attempts with backoff, **fails open** on any error/timeout. Runs on every cold start, no
-resume re-check.
+unparseable → **fail open** (an app ahead of the gateway never sees the prompt).
+`runVersionGate` does 3 attempts with backoff, **fails open** on any error/timeout (the
+`update-required` verdict name is historical — it now means "a newer version is available").
+Runs on every cold start, no resume re-check. The show/snooze decision is **latched once**
+when the verdict resolves (a `useState` set in `VersionGate`, NOT re-derived from the live
+`Date.now()` each render) — VersionGate re-renders on ordinary navigation, so a per-render
+clock check would pop the modal mid-task the moment a snooze elapsed; latching confines
+reappearance to cold starts. A "Later" both persists the 24h snooze AND hides the card for the
+rest of the session. Known minor: a signed-out, below-minimum cold start briefly flashes the
+card before `StartupGate` redirects to `/sign-in` (the card re-presents correctly after
+sign-in) — accepted rather than coupling `VersionGate` to the auth gate.
 
 ## QR pairing + relay connection (`src/features/pc-connect/`)
 
@@ -327,7 +339,8 @@ Zustand slices split by storage sensitivity (`storage.ts` = the two persist back
   never in a slice).
 - **MMKV (non-secrets):** `chatStore` (drafts + per-chat/AI-style prefs), `themeStore`, `reposStore`
   (search/language prefs only — server cache stays in-memory via `partialize`), `offlineQueueStore`,
-  `pushRegistrationStore`, `blockedOrgsStore`, `usageTrackingStore`, `utmStore`, `devModeStore`.
+  `pushRegistrationStore`, `blockedOrgsStore`, `usageTrackingStore`, `updatePromptStore`,
+  `utmStore`, `devModeStore`.
 - **In-memory (not persisted, reset on socket teardown):** `runtimeStore`, `socketStore`,
   `chatMessagesStore`, `chatChromeStore`, `readMarkerStore`, `systemWarningsStore`,
   `interactionStore`, the health stores.
@@ -336,7 +349,7 @@ Server state belongs to TanStack Query, not Zustand. `forceSignOut(opts?)` (`for
 the single logout/wipe composition: clears the authToken + connection URL, resets every non-secret
 MMKV user-data store (`wipeLocalUserData()`), optionally deletes the Clerk client JWT + runs a
 live Clerk sign-out. Deliberately PRESERVED (device/environment state): `installMarker`,
-`devModeStore`, `usageTrackingStore`.
+`devModeStore`, `usageTrackingStore`, `updatePromptStore`.
 
 ### Startup gate + stale-credential cleanup (`src/features/auth/`)
 
@@ -568,7 +581,16 @@ tab labels terminal sessions "Terminal" and hides Kill for them (the api doesn't
   (tool-permission, ask-user-question, secrets, connection-request). Server events bound globally:
   `tool_permission_required` → retroactively flags the matching `tool_use` (renders inside
   `PermissionBlock`); `ask_user_question` → `interactionStore` → `AskUserQuestionBlock`;
-  `secrets:submitted` → flips the `SecretsBlock` form. Blocks reach the socket through
+  `secrets:submitted` → flips the `SecretsBlock` form. The ask prompt renders INSIDE the
+  transcript scroller — `ActiveChatInteractions` mounts as the `MessageList` `footer`, never as a
+  fixed sibling (its content is unbounded: N questions + a shared Submit; a sibling can't scroll
+  to Submit nor keyboard-avoid the "Other" input — issue #10). A focused "Other" input scrolls
+  itself above the keyboard via `MessageListHandle.scrollFooterInputIntoView` (measured against
+  the KAV-shrunk list bounds, re-measured on `keyboardDidShow`). While an ask prompt is pending
+  (`footerActive`, wired from `interactionStore`) the run is paused, so the list SUPPRESSES its
+  always-snap-on-growth for footer-internal edits — otherwise toggling "Other" on a stacked prompt
+  would yank the just-revealed input off-screen; the prompt is still revealed once when it first
+  appears. Blocks reach the socket through
   `ChatInteractionProvider` / `useChatInteraction()` (mounted by `ActiveChatScreen`), falling back
   to that context when no explicit callback is passed. Connection OAuth opens the in-app browser to
   `<relay>/connections?service=`.

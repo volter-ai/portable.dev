@@ -1,15 +1,20 @@
 /**
- * versionCheck — the framework-free core of the force-update gate. The rule:
+ * versionCheck — the framework-free core of the version-update gate. The rule:
  * fetch the gateway's minimum supported
  * version, compare **major.minor only** (patch is irrelevant — patches are
  * backwards-compatible), and FAIL OPEN on any error/timeout/unparseable data so
- * the app is never blocked by a flaky network or a version-service hiccup.
+ * the app never even sees the prompt on a flaky network or a version-service
+ * hiccup.
  *
  * Pure + injectable (no React/Expo/native deps) so it unit-tests with a mocked
  * `getMinimumVersion` and a no-op `sleep`.
  */
 
-/** The gate's decision: render the app, or block with the update screen. */
+/**
+ * The gate's decision: render the app as-is, or offer the dismissible
+ * "Update available" prompt over it (`update-required` — the historical wire
+ * name for "a newer version is available"; it no longer hard-blocks, #1522).
+ */
 export type VersionGateVerdict = 'ok' | 'update-required';
 
 /**

@@ -20,7 +20,9 @@ import { getGatewayUrl } from '../auth/gatewayConfig';
 // FILE import (not the pc-connect barrel) so the heavy PcConnectGate graph stays
 // out of the api module — only the SecureStore-backed token resolver is pulled in.
 import { persistRenewedDataPathToken, resolveDataPathToken } from '../pc-connect/dataPathToken';
+import { createAuthedFetch } from '../auth/authedFetch';
 import { RelayApiClient } from './relayClient';
+import { configureE2eSessions } from './e2eSessionManager';
 import { configureQueryOnlineManager, createQueryClient, type NetInfoLike } from './queryClient';
 
 const ApiContext = createContext<RelayApiClient | null>(null);
@@ -38,6 +40,18 @@ export interface ApiProviderProps {
 /** Build the default authed sandbox client from the configured Gateway URL. */
 function buildDefaultClient(): RelayApiClient {
   const gateway = new GatewayClient({ gatewayUrl: getGatewayUrl() });
+  // Wire the shared E2E session manager (portable.dev#13) so the Socket.IO layer can
+  // establish/reuse the connected PC's session for per-frame encryption. The
+  // handshake MUST ride the SAME authed transport as the HTTP tunnel: though
+  // `/api/e2e/handshake` is public on the PC, the gateway relay still requires a
+  // valid Bearer to forward any `/t/<pcId>/*` request (only /api/health is exempt),
+  // so a plain, Bearer-less fetch is rejected 401 at the relay.
+  const handshakeFetch = createAuthedFetch({
+    gateway,
+    getToken: resolveDataPathToken,
+    persistRenewedToken: persistRenewedDataPathToken,
+  });
+  configureE2eSessions({ outerFetch: handshakeFetch });
   // The relay data path is authenticated by the connected PC's data-path JWT
   // (QR pairing), falling back to the legacy Portable authToken when no PC is
   // connected — every `/api/*` request rides this single funnel. The PC slides
@@ -47,6 +61,10 @@ function buildDefaultClient(): RelayApiClient {
     gateway,
     getToken: resolveDataPathToken,
     persistRenewedToken: persistRenewedDataPathToken,
+    // End-to-end encryption (portable.dev#13): tunnel every JSON `/api/*` request
+    // through the PC's `POST /api/e2e` so the relay + Cloudflare see only opaque
+    // ciphertext. Uses the connected pcId's QR-provisioned E2E key + relay base.
+    e2e: {},
   });
 }
 

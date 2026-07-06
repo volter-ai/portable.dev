@@ -25,8 +25,9 @@ function isNonEmptyString(value: unknown): value is string {
 /**
  * Parse a scanned QR string into a validated {@link QrLinkPayload}, or
  * `null` when it is not a well-formed pairing payload (not JSON, or missing any of
- * the three required fields). The caller turns `null` into the visible
- * `qr-scanner-error` + retry.
+ * the four required fields — a pre-E2E QR without `e2eKey` is malformed too; the
+ * user restarts `portable` to get a fresh QR). The caller turns `null` into the
+ * visible `qr-scanner-error` + retry.
  *
  * `gatewayBase` is additionally required to be an `http(s)` URL so a bogus base
  * can never become the relay origin; `token` is the non-empty JWT string the app
@@ -45,8 +46,13 @@ export function parseQrPayload(raw: string): QrLinkPayload | null {
   if (typeof parsed !== 'object' || parsed === null) return null;
   const candidate = parsed as Record<string, unknown>;
 
-  const { gatewayBase, pcId, token } = candidate;
-  if (!isNonEmptyString(gatewayBase) || !isNonEmptyString(pcId) || !isNonEmptyString(token)) {
+  const { gatewayBase, pcId, token, e2eKey } = candidate;
+  if (
+    !isNonEmptyString(gatewayBase) ||
+    !isNonEmptyString(pcId) ||
+    !isNonEmptyString(token) ||
+    !isNonEmptyString(e2eKey)
+  ) {
     return null;
   }
 
@@ -56,5 +62,6 @@ export function parseQrPayload(raw: string): QrLinkPayload | null {
     gatewayBase: gatewayBase.trim(),
     pcId: pcId.trim(),
     token: token.trim(),
+    e2eKey: e2eKey.trim(),
   };
 }

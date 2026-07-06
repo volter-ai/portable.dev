@@ -81,6 +81,34 @@ describe('linkPc (save-only — rev6)', () => {
     expect(result.pcId).toBe('pc_charlie');
     expect(await getDeviceToken('pc_charlie')).toBe('pc-minted-jwt');
   });
+
+  it('persists the QR e2eKey beside the JWT (portable.dev#13)', async () => {
+    const saveToken = jest.fn().mockResolvedValue(undefined);
+    const saveE2eKey = jest.fn().mockResolvedValue(undefined);
+
+    await linkPc(
+      {
+        gatewayBase: GATEWAY,
+        pcId: 'pc_charlie',
+        token: 'pc-minted-jwt',
+        e2eKey: 'psk-base64',
+      },
+      { saveToken, saveE2eKey }
+    );
+
+    expect(saveE2eKey).toHaveBeenCalledWith('pc_charlie', 'psk-base64');
+  });
+
+  it('skips the e2eKey save when the input has none (Apple-reviewer path)', async () => {
+    const saveE2eKey = jest.fn().mockResolvedValue(undefined);
+
+    await linkPc(
+      { gatewayBase: GATEWAY, pcId: 'pc_charlie', token: 'pc-minted-jwt' },
+      { saveE2eKey }
+    );
+
+    expect(saveE2eKey).not.toHaveBeenCalled();
+  });
 });
 
 describe('verifyTunnelAddress', () => {

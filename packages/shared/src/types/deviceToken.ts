@@ -66,4 +66,11 @@ export interface QrLinkPayload {
   pcId: string;
   /** The PC-minted data-path JWT — the credential the app presents on every request. */
   token: string;
+  /**
+   * The 32-byte E2E pre-shared key (base64) authenticating the per-session
+   * X25519 handshake (`@vgit2/shared/e2e`). The QR is the ONLY channel this
+   * key ever travels — it is never sent over the relay, so the gateway (which
+   * DOES see the JWT) can never read or forge E2E traffic (portable.dev#13).
+   */
+  e2eKey: string;
 }

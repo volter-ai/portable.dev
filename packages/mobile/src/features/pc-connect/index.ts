@@ -18,7 +18,10 @@ export {
   getDeviceToken,
   saveDeviceToken,
   clearDeviceToken,
+  getE2eKey,
+  saveE2eKey,
   DEVICE_TOKEN_KEY_PREFIX,
+  E2E_KEY_PREFIX,
 } from './deviceTokenStore';
 export {
   relayBaseForPc,
@@ -28,7 +31,14 @@ export {
   CONNECTED_PC_KEY,
 } from './connectedPcStore';
 export { resolveDataPathToken, persistRenewedDataPathToken } from './dataPathToken';
-export { linkPc, type LinkPcInput, type LinkPcDeps, type LinkPcResult } from './linkPc';
+export {
+  linkPc,
+  resetAndLinkPc,
+  type LinkPcInput,
+  type LinkPcDeps,
+  type LinkPcResult,
+  type ResetAndLinkPcDeps,
+} from './linkPc';
 export {
   connectToPc,
   type ConnectToPcDeps,

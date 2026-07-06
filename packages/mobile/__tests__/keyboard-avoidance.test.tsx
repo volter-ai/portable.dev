@@ -103,6 +103,10 @@ jest.mock('../src/features/chat/interactions', () => {
     ActiveChatInteractions: () => null,
     ChatInteractionProvider: ({ children }: { children: React.ReactNode }) =>
       React.createElement(React.Fragment, null, children),
+    // ActiveChatScreen reads the pending-ask flag to gate the list's auto-scroll
+    // suppression (issue #10). No prompt in this suite → always false.
+    useInteractionStore: (selector: (s: { askPrompts: Record<string, unknown> }) => unknown) =>
+      selector({ askPrompts: {} }),
   };
 });
 jest.mock('../src/features/chat/MessageList', () => ({ MessageList: () => null }));

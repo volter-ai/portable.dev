@@ -267,6 +267,30 @@ describe('home sections', () => {
     expect(screen.queryByText(/<promise>COMPLETE<\/promise>/)).toBeNull();
   });
 
+  it('strips a truncated <task-notification> blob from the card preview (public issue #11)', () => {
+    // A preview built by an OLDER PC api that did not strip server-side arrives here
+    // truncated at 100 chars, so the closing </task-notification> tag is gone. The card
+    // must still hide the raw marker (falling back to the chat title), not render it.
+    const NOTE =
+      '<task-notification>\n<task-id>bvt6pifet</task-id>\n<tool-use-id>toolu_01S8gFaS</tool-use-id>\n<status>killed</status>';
+    const chats: ChatListItem[] = [
+      {
+        id: 'c-note',
+        type: 'claude_code',
+        title: 'Start dev server',
+        lastUpdated: Date.now() - 3600_000,
+        repo_path: '~/claude-workspace/me@x.com/octocat/hello',
+        firstMessagePreview: `${NOTE.slice(0, 100)}...`,
+        lastMessagePreview: `${NOTE.slice(0, 100)}...`,
+      } as ChatListItem,
+    ];
+    wrap(<HomeChatsSection chats={chats} onChatPress={jest.fn()} onSeeMore={jest.fn()} />);
+    // Title falls back to chat.title; no fragment of the marker is rendered anywhere.
+    expect(screen.getByText('Start dev server')).toBeTruthy();
+    expect(screen.queryByText(/task-notification/)).toBeNull();
+    expect(screen.queryByText(/task-id/)).toBeNull();
+  });
+
   it('HomeChatsSection renders nothing with no chats', () => {
     wrap(<HomeChatsSection chats={[]} onChatPress={jest.fn()} onSeeMore={jest.fn()} />);
     expect(screen.queryByTestId('home-recent-chats')).toBeNull();

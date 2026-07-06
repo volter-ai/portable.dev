@@ -43,7 +43,9 @@ import {
   type SystemIdleShutdownPayload,
   type SystemIdleWarningPayload,
   type UserRuntimeStatePayload,
+  wrapSocketE2e,
 } from '@vgit2/shared/socket';
+import type { E2eSession } from '@vgit2/shared/e2e';
 import type {
   BufferedMessage,
   ChatStatus,
@@ -71,6 +73,13 @@ import { useSandboxSessionStore } from '../health/sandboxSessionStore';
 import { optimisticRepoPath, useChatChromeStore } from '../chat/chrome/chatChromeStore';
 import { useInteractionStore } from '../chat/interactions/interactionStore';
 import { getRelayUrl } from '../api/relayUrlStore';
+import {
+  dropConnectedE2eSession,
+  getOrCreateE2eSession,
+  isE2eConfigured,
+} from '../api/e2eSessionManager';
+import { nativeRandomBytes } from '../api/e2eRandom';
+import { socketLog, shortId } from './socketLog';
 import { useRuntimeStore } from '../state/runtimeStore';
 import { ConnectionHealthMonitor, type ReconnectCause } from './connectionHealth';
 import { defaultAppState, defaultNetInfo, type AppStateLike, type NetInfoLike } from './lifecycle';
@@ -92,6 +101,15 @@ export const MOBILE_SOCKET_OPTIONS: CreateSocketOptions = {
   reconnectionAttempts: Infinity,
   withCredentials: true,
 };
+
+/** E2E stale-session rebuilds per socket lifetime before giving up (reset on connect). */
+const MAX_E2E_RECOVERY_ATTEMPTS = 5;
+
+/** Bounded retry for the initial socket build (E2E handshake down / relay URL not yet ready). */
+const BUILD_RETRY_BACKOFF_MS = [500, 1000, 2000, 3000, 5000];
+// Single attempt under Jest (no backoff timers in the test harness); full retry in dev/release.
+const MAX_BUILD_ATTEMPTS =
+  typeof process !== 'undefined' && process.env?.NODE_ENV === 'test' ? 1 : 6;
 
 export interface NativeSocketDeps {
   /** Resolve the auth token for the handshake (default: SecureStore). */
@@ -122,6 +140,23 @@ export interface NativeSocketDeps {
    * for tests.
    */
   getDeviceName?: () => string | undefined;
+  /**
+   * Establish/reuse the E2E session for the connected PC (portable.dev#13) whose
+   * keys encrypt every socket frame + whose `sessionId` rides the handshake as
+   * `e2eSid`. Default uses the shared session manager, returning `null` when E2E
+   * is not configured (tests) so the socket stays plaintext as before.
+   */
+  getE2eSession?: () => Promise<E2eSession | null>;
+}
+
+/**
+ * Default E2E session resolver: use the shared manager in production, but stay
+ * null (plaintext) in tests where the manager was never configured. A real
+ * handshake failure in production propagates (the socket fails → recovery).
+ */
+async function defaultGetE2eSession(): Promise<E2eSession | null> {
+  if (!isE2eConfigured()) return null;
+  return getOrCreateE2eSession();
 }
 
 /** Read this build's own version (baked into the bundle from app.json). */
@@ -219,6 +254,46 @@ export function useNativeSocket(deps: NativeSocketDeps = {}): NativeSocket {
 
   const getSocket = useCallback(() => socketRef.current, []);
 
+  // Points at the current `buildSocket` so the recovery below can rebuild without a
+  // useCallback cycle (buildSocket depends on bindHandlers → the recovery). Assigned
+  // right after buildSocket is defined.
+  const buildSocketRef = useRef<(() => Promise<boolean>) | null>(null);
+  // Bounded E2E recovery counter; reset on a live connect.
+  const e2eRecoveryRef = useRef(0);
+
+  /**
+   * The socket analogue of the HTTP tunnel's `410`→re-handshake recovery: when the
+   * PC rejects a socket whose `e2eSid` names a session it no longer holds (api
+   * restart / TTL), socket.io retries the same baked-in sid forever, so drop the
+   * cached session and rebuild with a fresh handshake.
+   */
+  const recoverE2eSession = useCallback(async () => {
+    const attempt = (e2eRecoveryRef.current += 1);
+    if (attempt > MAX_E2E_RECOVERY_ATTEMPTS) {
+      socketLog('e2e:recover_exhausted', { attempt }, 'error');
+      return;
+    }
+    socketLog('e2e:recover', { attempt });
+    await dropConnectedE2eSession();
+    // Stop reconnection FIRST so no queued retry fires against the dead sid.
+    setReconnection(socketRef.current, false);
+    try {
+      socketRef.current?.disconnect?.();
+    } catch {
+      // ignore
+    }
+    socketRef.current = null;
+    try {
+      await buildSocketRef.current?.();
+    } catch (err) {
+      socketLog(
+        'e2e:recover_build_failed',
+        { error: String((err as Error)?.message ?? err) },
+        'error'
+      );
+    }
+  }, []);
+
   /** Rejoin every tracked room — the resync run on (re)connect and on resume. */
   const resync = useCallback(() => {
     const sock = socketRef.current;
@@ -265,6 +340,9 @@ export function useNativeSocket(deps: NativeSocketDeps = {}): NativeSocket {
       const handleConnect = () => {
         const store = useSocketStore.getState();
         const isReconnect = store.hasConnectedOnce;
+        socketLog('connect', { id: shortId(sock.id), reconnect: isReconnect });
+        // A live connect proves the E2E session is valid — reset the recovery budget.
+        e2eRecoveryRef.current = 0;
         store.markConnected(sock.id ?? null);
         // A live connect means the session is back: drop the re-provision
         // overlay if it is still up (belt-and-braces — the epoch remount
@@ -278,12 +356,28 @@ export function useNativeSocket(deps: NativeSocketDeps = {}): NativeSocket {
         // forced reconnect).
         healthRef.current?.notifyConnected();
       };
-      const handleDisconnect = () => {
+      const handleDisconnect = (...args: unknown[]) => {
+        const reason = args[0];
+        socketLog('disconnect', { reason: String(reason ?? '') }, 'warning');
         useSocketStore.getState().markDisconnected();
         // Don't wait for the slow engine.io ping timeout — drive the reconnect now.
         healthRef.current?.notifyDisconnected();
       };
-      const handleConnectError = () => useSocketStore.getState().setConnectionState('reconnecting');
+      const handleConnectError = (...args: unknown[]) => {
+        const err = args[0] as { message?: string } | undefined;
+        const message = err?.message ?? 'unknown';
+        // The PC rejects an E2E socket BEFORE its own handshake diagnostic, so this
+        // is the only place that failure is observable.
+        socketLog('connect_error', { message }, 'error');
+        useSocketStore.getState().setConnectionState('reconnecting');
+        // Recover on the PC's explicit E2E rejection, and when E2E is configured but
+        // we never connected (an epoch remount that reused a now-dead cached session).
+        if (isE2eConfigured()) {
+          const isE2eReject = /e2e session/i.test(message);
+          const neverConnected = !useSocketStore.getState().hasConnectedOnce;
+          if (isE2eReject || neverConnected) void recoverE2eSession();
+        }
+      };
       const handleChatCreated = (...args: unknown[]) => {
         const data = args[0] as { chat?: { id?: string; repo_path?: string } } | undefined;
         const chatId = data?.chat?.id;
@@ -536,7 +630,7 @@ export function useNativeSocket(deps: NativeSocketDeps = {}): NativeSocket {
       sock.on(SERVER_EVENTS.SANDBOX_METRICS, handleSandboxMetrics);
       sock.on(SERVER_EVENTS.SESSION_REAPED, handleSessionReaped);
     },
-    [resync]
+    [resync, recoverE2eSession]
   );
 
   /**
@@ -547,6 +641,7 @@ export function useNativeSocket(deps: NativeSocketDeps = {}): NativeSocket {
    */
   const buildSocket = useCallback(async (): Promise<boolean> => {
     const d = depsRef.current;
+    socketLog('build:start');
     // Resolve the token + sandbox URL CONCURRENTLY: they are independent
     // SecureStore reads, so reading them in parallel shaves one keychain
     // round-trip off the post-health-gate socket bring-up (the "server up but
@@ -555,7 +650,11 @@ export function useNativeSocket(deps: NativeSocketDeps = {}): NativeSocket {
       (d.getAuthToken ?? resolveDataPathToken)(),
       (d.getRelayUrl ?? getRelayUrl)(),
     ]);
-    if (!url) return false;
+    if (!url) {
+      // No relay URL yet — deferred, the mount effect's bounded retry re-attempts.
+      socketLog('build:deferred', { reason: 'no relay url', hasToken: !!token }, 'warning');
+      return false;
+    }
 
     // Report this build's version in the handshake so the backend can detect
     // pre-handshake (outdated) native builds. Older builds send nothing.
@@ -568,6 +667,37 @@ export function useNativeSocket(deps: NativeSocketDeps = {}): NativeSocket {
     // the handshake bypasses the relay and the socket never connects (see
     // `relaySocketTarget`).
     const { origin, path: socketPath } = relaySocketTarget(url);
+
+    // E2E encryption (portable.dev#13): establish/reuse the per-PC session so we can
+    // pass its `e2eSid` in the handshake and encrypt every frame. Skipped entirely
+    // when E2E is neither injected nor configured (tests). A handshake failure is
+    // logged and rethrown so the mount effect's bounded retry can re-attempt.
+    const e2eConfigured = !!d.getE2eSession || isE2eConfigured();
+    socketLog('build:resolved-url', {
+      origin,
+      path: socketPath,
+      hasToken: !!token,
+      e2eConfigured,
+    });
+    const e2eResolver = d.getE2eSession ?? defaultGetE2eSession;
+    let e2eSession: E2eSession | null = null;
+    if (e2eConfigured) {
+      try {
+        e2eSession = await e2eResolver();
+        socketLog('e2e:ready', {
+          sid: shortId(e2eSession?.sessionId),
+          encrypted: !!e2eSession,
+        });
+      } catch (err) {
+        socketLog(
+          'e2e:handshake_failed',
+          { error: String((err as Error)?.message ?? err) },
+          'error'
+        );
+        throw err;
+      }
+    }
+
     const sock = factory(token, origin, {
       ...MOBILE_SOCKET_OPTIONS,
       path: socketPath,
@@ -576,12 +706,19 @@ export function useNativeSocket(deps: NativeSocketDeps = {}): NativeSocket {
         token: token ?? '',
         ...(appVersion ? { appVersion } : {}),
         ...(deviceName ? { deviceName } : {}),
+        ...(e2eSession ? { e2eSid: e2eSession.sessionId } : {}),
       },
     });
-    socketRef.current = sock;
-    bindHandlers(sock);
+    // Wrap BEFORE binding handlers so bindHandlers' `on` registrations see the
+    // decrypting facade and every emit seals.
+    const wrapped = e2eSession ? wrapSocketE2e(sock, e2eSession.keys, nativeRandomBytes) : sock;
+    socketRef.current = wrapped;
+    bindHandlers(wrapped);
+    socketLog('build:done', { encrypted: !!e2eSession });
     return true;
   }, [bindHandlers]);
+  // Keep the recovery path pointed at the latest buildSocket (avoids a useCallback cycle).
+  buildSocketRef.current = buildSocket;
 
   /**
    * Build the connection-health machine for this mount, wiring its I/O seams to the
@@ -676,6 +813,7 @@ export function useNativeSocket(deps: NativeSocketDeps = {}): NativeSocket {
   // --- Socket creation + handler binding (once, after sandbox URL is available) ---
   useEffect(() => {
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     // Build the health machine for this mount BEFORE the socket, so the connect
     // handler (which fires during buildSocket) can reach it via healthRef.
     const monitor = makeHealthMonitor();
@@ -683,20 +821,45 @@ export function useNativeSocket(deps: NativeSocketDeps = {}): NativeSocket {
     monitor.start();
 
     void (async () => {
-      const built = await buildSocket();
-      // If the component unmounted while we were resolving the URL/token, undo it
-      // — with the manager's reconnection disabled FIRST, so no queued retry
-      // fires against a dead URL after teardown.
-      if (cancelled && built) {
-        monitor.stop();
-        setReconnection(socketRef.current, false);
-        socketRef.current?.disconnect?.();
-        socketRef.current = null;
+      // Bounded retry: a `!url` deferral or a thrown E2E handshake (PC mid-restart,
+      // relay not yet re-pointed) self-heals on a front-loaded backoff instead of
+      // dead-ending until the next epoch remount.
+      for (let attempt = 0; attempt < MAX_BUILD_ATTEMPTS && !cancelled; attempt++) {
+        let built = false;
+        try {
+          built = await buildSocket();
+        } catch (err) {
+          socketLog(
+            'build:error',
+            { attempt: attempt + 1, error: String((err as Error)?.message ?? err) },
+            'error'
+          );
+        }
+        if (cancelled) {
+          // Unmounted mid-build — undo any socket we just created, reconnection
+          // disabled FIRST so no queued retry fires against a dead URL post-teardown.
+          if (built) {
+            setReconnection(socketRef.current, false);
+            socketRef.current?.disconnect?.();
+            socketRef.current = null;
+          }
+          return;
+        }
+        if (built) return; // connected path takes over via connect / connect_error
+        // Deferred or threw. No sleep after the final attempt (also keeps the test
+        // env — MAX_BUILD_ATTEMPTS = 1 — timer-free).
+        if (attempt + 1 >= MAX_BUILD_ATTEMPTS) break;
+        const delay = BUILD_RETRY_BACKOFF_MS[Math.min(attempt, BUILD_RETRY_BACKOFF_MS.length - 1)];
+        await new Promise<void>((resolve) => {
+          retryTimer = setTimeout(resolve, delay);
+        });
       }
+      if (!cancelled) socketLog('build:exhausted', { attempts: MAX_BUILD_ATTEMPTS }, 'error');
     })();
 
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
       monitor.stop();
       healthRef.current = null;
       // Stop the io manager BEFORE disconnecting: with reconnectionAttempts =

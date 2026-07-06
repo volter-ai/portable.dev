@@ -191,4 +191,14 @@ export interface MobileRnAppleReviewerCredentialsResponse {
   gatewayBase: string;
   pcId: string;
   token: string;
+  /**
+   * The reviewer box's E2E pre-shared key (base64, portable.dev#13/#15) —
+   * published alongside `reviewerToken` when `PORTABLE_REVIEWER_PUBLISH` is on
+   * (env fallback: `APPLE_REVIEWER_E2E_KEY`) so the QR-skip path can complete
+   * the E2E handshake. The gateway 503s instead of answering without one (a
+   * keyless pairing is unusable under mandatory E2E) — so a 200 always carries
+   * it; the field stays optional only for wire back-compat with older gateways,
+   * and the app aborts the QR-skip when it's absent.
+   */
+  e2eKey?: string;
 }

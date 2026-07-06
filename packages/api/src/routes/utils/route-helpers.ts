@@ -1,3 +1,4 @@
+import { stripTaskNotifications } from '@vgit2/shared/utils/taskNotificationHelpers';
 import { Request } from 'express';
 
 /**
@@ -105,6 +106,15 @@ export function extractMessagePreview(message: any): string {
       content = (lastBlock.text || lastBlock.content || '').trim();
     }
   }
+
+  // Strip injected task-notification metadata BEFORE truncating: the mobile client
+  // also strips at render time, but its regex needs the closing tag — which the
+  // 100-char cut destroys, leaking raw XML into chat cards (public issue #11). We use
+  // the STRICT strip (not the truncation-tolerant preview variant): `content` here is
+  // the full stored message, where an SDK-injected blob is always complete, so the
+  // strict regex is lossless — it never chops a human message that merely mentions the
+  // marker without closing it.
+  content = stripTaskNotifications(content);
 
   // Truncate to 100 characters for preview
   if (content.length > 100) {

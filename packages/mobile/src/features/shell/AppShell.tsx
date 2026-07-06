@@ -6,8 +6,9 @@
  *
  *   1. ClerkAuthProvider — mounted at `app/_layout.tsx` (around this shell).
  *   2. VersionGate — the outermost in-shell gate: a stale app (below the gateway
- *      minimum via the public `GET /api/min-version-v2`) is force-updated before
- *      any auth / PC-connect runs. Fails open.
+ *      minimum via the public `GET /api/min-version-v2`) gets the dismissible
+ *      "Update available" card over the still-usable app (Later → 24h snooze;
+ *      never a hard block, #1522). Fails open.
  *   3. StartupGate — the Clerk sign-in gate: a persisted authToken ⇒ in; else
  *      redirect to `/sign-in` (Clerk sign-in is KEPT — only the OnboardingGate
  *      was unwrapped in the local-first pivot).

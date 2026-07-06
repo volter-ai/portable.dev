@@ -163,6 +163,9 @@ afterEach(() => {
 function connectedPcConfig(): PcConnectConfig {
   return {
     getConnectedPcId: async () => CONNECTED_PC,
+    // A connected device that passes the gate also holds the pcId's E2E key —
+    // without it the host would self-heal back to the scanner (portable.dev#13).
+    getE2eKey: async () => 'psk-base64',
     onConnect: async () => true,
     onLink: async () => {},
   };
@@ -295,6 +298,7 @@ describe('AppShell gate ladder', () => {
       gatewayBase: 'https://app.portable.dev',
       pcId: 'pc-1',
       token: 'pc-minted-jwt',
+      e2eKey: 'psk-base64',
     });
     act(() => mockPcScan!(qr));
 
@@ -303,6 +307,7 @@ describe('AppShell gate ladder', () => {
       gatewayBase: 'https://app.portable.dev',
       pcId: 'pc-1',
       token: 'pc-minted-jwt',
+      e2eKey: 'psk-base64',
     });
     expect(onConnect).toHaveBeenCalledWith('pc-1');
     expect(screen.queryByTestId('qr-scanner')).toBeNull();

@@ -7,8 +7,9 @@
  * scanner — yet the PC connection is volatile (the gateway's TunnelRegistry is
  * in-memory and lapses when the launcher stops or the gateway restarts; a token
  * minted with a mismatched `JWT_SECRET` 401s). This modal gives a reachable
- * "Connect PC" affordance: scan the pairing QR again → {@link linkPc save the JWT}
- * → {@link connectToPc connect} (which now ALSO validates the token, see
+ * "Connect PC" affordance: scan the pairing QR again → {@link resetAndLinkPc}
+ * (drop any stale pairing, then save the fresh JWT + E2E key) →
+ * {@link connectToPc connect} (which now ALSO validates the token, see
  * {@link verifyTunnelAddress}) → on success the app is re-pointed at the PC.
  *
  * It replaced the misleading "Connect GitHub" repos-error button on Home + Repos
@@ -32,7 +33,7 @@ import { getGatewayUrl } from '../auth/gatewayConfig';
 import { Icon, useAppTheme } from '../../theme';
 
 import { connectToPc, type ConnectToPcResult, type ConnectToPcReason } from './connectToPc';
-import { saveDeviceToken } from './deviceTokenStore';
+import { resetAndLinkPc } from './linkPc';
 import { QRScannerGate } from './QRScannerGate';
 
 type Phase = 'scan' | 'connecting' | 'error';
@@ -93,7 +94,12 @@ export function PcConnectModal({
   const [phase, setPhase] = useState<Phase>('scan');
   const [error, setError] = useState<string | null>(null);
 
-  const doLink = link ?? ((p: QrLinkPayload) => saveDeviceToken(p.pcId, p.token));
+  // Default re-scan persistence: the SINGLE shared resetAndLinkPc — wipe any
+  // existing pairing first (treat a re-scan as a fresh disconnect + connect) then
+  // save the fresh QR's JWT AND E2E key. This is what fixes the "No E2E key for
+  // the connected PC" error on re-pair; every reconnection screen uses this same
+  // default, so the save can never drift out of sync again (portable.dev#13).
+  const doLink = link ?? (async (p: QrLinkPayload) => void (await resetAndLinkPc(p)));
   const doConnect = connect ?? ((id: string) => connectToPc(id, { gatewayBase: getGatewayUrl() }));
   const scanner = renderScanner ?? ((p: PcConnectScannerProps) => <QRScannerGate {...p} />);
 

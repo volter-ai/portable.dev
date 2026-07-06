@@ -25,7 +25,12 @@ import {
 import { startConnectionWatch, type ConnectionWatcherHandle } from './ConnectionWatcher.js';
 import { internalBridgePath, mintInternalSecret, writeInternalBridge } from './InternalBridge.js';
 import { ensureSidecarRegistration } from './McpSidecarRegistrar.js';
-import { ensureJwtSecret, mintPairingToken, resolvePairingIdentity } from './PairingIdentity.js';
+import {
+  ensureE2ePsk,
+  ensureJwtSecret,
+  mintPairingToken,
+  resolvePairingIdentity,
+} from './PairingIdentity.js';
 import { PairingServer } from './PairingServer.js';
 import { prepareCredentials } from './prepareCredentials.js';
 import { startPresenceWatch, type PresenceWatcherHandle } from './PresenceWatcher.js';
@@ -84,15 +89,27 @@ export interface LauncherDeps {
   apiProcess: ApiProcess;
   /**
    * Build the tunnel-router once the api base URL is known. `reviewerToken` is the
-   * launcher-minted data-path JWT to PUBLISH on tunnel registration — passed by
-   * {@link Launcher.boot} ONLY when the Apple-reviewer opt-in
-   * (`PORTABLE_REVIEWER_PUBLISH`, {@link resolveReviewerPublish}) is on; otherwise
-   * `undefined`, so the registration agent's body is byte-unchanged (a NORMAL PC
-   * never publishes its JWT — the invariant).
+   * launcher-minted data-path JWT and `reviewerE2eKey` the E2E PSK to PUBLISH on
+   * tunnel registration — both passed by {@link Launcher.boot} ONLY when the
+   * Apple-reviewer opt-in (`PORTABLE_REVIEWER_PUBLISH`,
+   * {@link resolveReviewerPublish}) is on; otherwise `undefined`, so the
+   * registration agent's body is byte-unchanged (a NORMAL PC never publishes its
+   * JWT or its E2E key — the invariant). The PSK rides along because the QR-skip
+   * pairing is unusable without it under mandatory E2E (portable.dev#15).
    */
-  makeTunnelRouter: (apiBaseUrl: string, reviewerToken?: string) => TunnelRouter;
+  makeTunnelRouter: (
+    apiBaseUrl: string,
+    reviewerToken?: string,
+    reviewerE2eKey?: string
+  ) => TunnelRouter;
   /** The stable local JWT secret, already ensured/persisted. */
   jwtSecret: string;
+  /**
+   * The E2E pre-shared key (base64, 32 bytes), already ensured/persisted
+   * ({@link ensureE2ePsk}). Carried in the pairing QR as `e2eKey` — the QR is
+   * the ONLY channel it ever travels (portable.dev#13).
+   */
+  e2ePsk: string;
   /** The stable pcId — the routing key + the minted JWT's userId. */
   pcId: string;
   /** The per-PC relay endpoint (`<relay>/t/<pcId>`) shown on the QR/page. */
@@ -224,12 +241,13 @@ export class Launcher {
     this.log = deps.log ?? ((line) => console.log(line));
   }
 
-  /** The QR payload string `{ gatewayBase, pcId, token }`. */
+  /** The QR payload string `{ gatewayBase, pcId, token, e2eKey }`. */
   private buildPayload(token: string): string {
     return JSON.stringify({
       gatewayBase: this.deps.gatewayBase,
       pcId: this.deps.pcId,
       token,
+      e2eKey: this.deps.e2ePsk,
     });
   }
 
@@ -344,13 +362,16 @@ export class Launcher {
 
     // 5. Bring up the tunnel-router + pcId-keyed registration agent.
     //    Apple-reviewer opt-in (PORTABLE_REVIEWER_PUBLISH): publish the minted
-    //    data-path JWT to the gateway so the disposable reviewer box can serve it
-    //    from /auth/mobile/react-native/apple-reviewer-credentials. Default OFF →
-    //    reviewerToken stays undefined → the registration body is byte-unchanged and
-    //    the gateway holds NO data-path JWT for a NORMAL PC (the invariant).
+    //    data-path JWT AND the E2E PSK to the gateway so the disposable reviewer
+    //    box can serve them from /auth/mobile/react-native/apple-reviewer-credentials
+    //    (mandatory E2E makes a keyless pairing unusable — portable.dev#15).
+    //    Default OFF → both stay undefined → the registration body is byte-unchanged
+    //    and the gateway holds NO data-path credentials for a NORMAL PC (the invariant).
     setStatus('Opening a secure tunnel…');
-    const reviewerToken = resolveReviewerPublish(env) ? token : undefined;
-    this.tunnel = this.deps.makeTunnelRouter(apiBaseUrl, reviewerToken);
+    const reviewerPublish = resolveReviewerPublish(env);
+    const reviewerToken = reviewerPublish ? token : undefined;
+    const reviewerE2eKey = reviewerPublish ? this.deps.e2ePsk : undefined;
+    this.tunnel = this.deps.makeTunnelRouter(apiBaseUrl, reviewerToken, reviewerE2eKey);
     await this.tunnel.start();
 
     // 5b. Wait for the tunnel's FIRST registration handoff (DNS verify + the
@@ -599,6 +620,10 @@ export async function createLauncher(options: CreateLauncherOptions = {}): Promi
   // Ensure the local JWT secret (generate + persist on first boot) and
   // share it with the api child so the api validates the launcher-minted JWT.
   const jwtSecret = ensureJwtSecret(store, env);
+  // Ensure the E2E pre-shared key (generate + persist on first boot) and share
+  // it with the api child (PORTABLE_E2E_PSK) so the PC answers E2E handshakes;
+  // the phone receives it ONLY inside the pairing QR (portable.dev#13).
+  const e2ePsk = ensureE2ePsk(store, env);
   const pcId = resolvePcId(store, env);
   const label = resolvePcLabel(env);
   const gatewayBase = resolveRelayBaseUrl(env);
@@ -711,6 +736,7 @@ export async function createLauncher(options: CreateLauncherOptions = {}): Promi
     log: apiLog,
     childEnvOverrides: {
       jwtSecret,
+      e2ePsk,
       pcId,
       relayBaseUrl: gatewayBase,
       debug,
@@ -741,6 +767,7 @@ export async function createLauncher(options: CreateLauncherOptions = {}): Promi
   return new Launcher({
     apiProcess,
     jwtSecret,
+    e2ePsk,
     pcId,
     endpoint,
     label,
@@ -767,22 +794,24 @@ export async function createLauncher(options: CreateLauncherOptions = {}): Promi
     prepareCredentials: async () => {
       await prepareCredentials({ store, env, log });
     },
-    makeTunnelRouter: (apiBaseUrl, reviewerToken) => {
+    makeTunnelRouter: (apiBaseUrl, reviewerToken, reviewerE2eKey) => {
       // The registration agent keeps the hosted relay pointed at this PC's
       // current tunnel URL. pcId-keyed, NO Clerk, NO shared secret;
       // the relay hardens open registration with a URL allowlist + rate-limit.
       // Driven by the router's onTunnelUrl seam (first capture + every
       // rotation) and torn down via onStop.
       //
-      // reviewerToken is the launcher-minted data-path JWT to PUBLISH on register —
-      // set by boot() ONLY when the Apple-reviewer opt-in (PORTABLE_REVIEWER_PUBLISH)
-      // is on, else undefined so a NORMAL PC's register body is byte-unchanged and
-      // the gateway holds NO data-path JWT (the invariant).
+      // reviewerToken is the launcher-minted data-path JWT and reviewerE2eKey the
+      // E2E PSK to PUBLISH on register — set by boot() ONLY when the Apple-reviewer
+      // opt-in (PORTABLE_REVIEWER_PUBLISH) is on, else undefined so a NORMAL PC's
+      // register body is byte-unchanged and the gateway holds NO data-path
+      // credentials (the invariant).
       const agent = new TunnelRegistrationAgent({
         pcId,
         label,
         relayBaseUrl: gatewayBase,
         reviewerToken,
+        reviewerE2eKey,
         log: apiLog,
         // Gate registration on the freshly-captured tunnel URL being genuinely
         // live from the public internet (DNS resolves + /api/health serves) — so

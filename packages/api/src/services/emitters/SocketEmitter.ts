@@ -1,5 +1,6 @@
 import { Server, Socket } from 'socket.io';
 
+import { emitToRoom } from '../socketBroadcast.js';
 import { IOutputEmitter } from './IOutputEmitter';
 
 /**
@@ -16,7 +17,10 @@ export class SocketEmitter implements IOutputEmitter {
   ) {}
 
   emit(event: string, data: unknown): void {
-    this.io.to(this.chatId).emit(event, data);
+    // Per-socket fan-out (NOT `io.to(room).emit`) so each frame passes through the
+    // E2E `socket.packet` seal; a room broadcast bypasses it → an E2E client drops
+    // the unsealed frame. See socketBroadcast.ts.
+    emitToRoom(this.io, this.chatId, event, data);
   }
 
   emitToUser(userId: string, event: string, data: unknown): void {

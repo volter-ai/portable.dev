@@ -17,7 +17,7 @@
  *
  * Usage:  bun scripts/build-portable.ts [outDir]   (default: <repo>/dist-portable)
  */
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
+import { mkdirSync, writeFileSync, rmSync, existsSync, copyFileSync } from 'fs';
 import path from 'path';
 
 const REPO = path.resolve(path.dirname(Bun.fileURLToPath(import.meta.url)), '..');
@@ -152,9 +152,10 @@ async function main(): Promise<void> {
     // `bin[portable] script name cli.js was invalid and removed`, dropping the command
     // from the published manifest. The CLI command stays the unscoped `portable`.
     bin: { portable: 'cli.js' },
-    // Only ship the two bundles (package.json is always included). Keeps a stray
+    // Ship the two bundles + the docs copied in step 4 (package.json is always
+    // included; README.md would be too, but is listed for clarity). Keeps a stray
     // node_modules / bun.lock out of the tarball if the artifact was installed/tested.
-    files: ['cli.js', 'server.js'],
+    files: ['cli.js', 'server.js', 'README.md', 'CHANGELOG.md'],
     // Both the launcher (cli.js shebang `#!/usr/bin/env bun`) and the api child it
     // spawns (`bun server.js`) run under Bun — Node alone is not sufficient.
     engines: { bun: '>=1.2.0' },
@@ -169,6 +170,24 @@ async function main(): Promise<void> {
   const pinned = external.filter((d) => !/^[\^~]/.test(distPkg.dependencies[d])).length;
   console.log(`[build-portable] pinned ${pinned}/${external.length} deps to exact versions`);
   writeFileSync(path.join(OUT, 'package.json'), JSON.stringify(distPkg, null, 2) + '\n');
+
+  // 4) Ship the npm-page docs: README.md (rendered on npmjs.com) + CHANGELOG.md (patch
+  // notes). Both sources cross the public-mirror boundary (packages/launcher is exported
+  // 1:1; CHANGELOG.md is in mirror ROOT_FILES), so the mirror's `publish:cli` finds them
+  // too. Hard-fail when missing — publishing without a README regresses the npm page.
+  const DOCS = [
+    { src: 'packages/launcher/README.npm.md', out: 'README.md' },
+    { src: 'CHANGELOG.md', out: 'CHANGELOG.md' },
+  ] as const;
+  for (const { src, out } of DOCS) {
+    const from = path.join(REPO, src);
+    if (!existsSync(from)) {
+      console.error(`[build-portable] BUILD FAILED: missing ${src} (ships as ${out})`);
+      process.exit(1);
+    }
+    copyFileSync(from, path.join(OUT, out));
+    console.log(`[build-portable]   ✓ ${out} (from ${src})`);
+  }
 
   console.log(`[build-portable] artifact → ${OUT}`);
   console.log(`[build-portable] published deps: ${external.length}`);

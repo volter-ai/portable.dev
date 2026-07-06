@@ -21,6 +21,7 @@ import { WORKSPACE_DIR } from '@vgit2/shared/constants';
 import { DEFAULT_MODEL_MODE } from '@vgit2/shared/models';
 
 import { JsonChatStore, type ChatRow } from './JsonChatStore.js';
+import { pickPreviewRows } from '../previewRows.js';
 import { DataTransformer } from '../utils/DataTransformer.js';
 
 import type { ChatOrigin, DbAdapter, SaveChatOptions } from '../DbAdapter.js';
@@ -197,8 +198,8 @@ export class JsonDbAdapter implements DbAdapter {
     const previews = await Promise.all(
       page.map(async (chat) => {
         const messages = await this.store.readMessages(chat.id); // ordered by timestamp asc
-        const firstUserMessage = messages.find((m) => m.type === 'user_message');
-        const lastMessage = messages.length > 0 ? messages[messages.length - 1] : undefined;
+        // Skip injected task-notification rows as preview candidates (public issue #11).
+        const { firstUserMessage, lastMessage } = pickPreviewRows(messages);
         return {
           ...this.transformer.transformChatFromDb(chat),
           message_count: messages.length,

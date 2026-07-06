@@ -159,9 +159,11 @@ The PC has **no cloud login**: the launcher mints its own data-path JWT with a p
 secret and the api validates it locally. The QR you scan carries everything the app needs —
 `{ gatewayBase, pcId, token }` — so pairing is a single scan, with nothing to copy by hand.
 
-> **Privacy note.** There is **no app↔PC end-to-end encryption** — the relay (and Cloudflare)
-> terminate TLS and can read traffic. To keep everything on infrastructure you control, run
-> your own relay: see [Self-hosting the relay](#self-hosting-the-relay).
+> **Privacy note.** App↔PC traffic is **end-to-end encrypted**: the launcher generates a
+> pre-shared key (`PORTABLE_E2E_PSK`) on first boot and carries it **only in the pairing QR**
+> (never over the network), so the relay and Cloudflare forward ciphertext they cannot read.
+> To also keep the routing infrastructure under your control, you can run your own relay:
+> see [Self-hosting the relay](#self-hosting-the-relay).
 
 ---
 
@@ -237,10 +239,10 @@ scripts\install-portable.ps1
 
 Each script ensures **Bun** is present, puts Bun's global-bin dir (`~/.bun/bin`) on your
 **PATH** (a winget/MSI Bun install often skips this, so the shim is otherwise unfindable),
-then installs the CLI. Run with **no arguments from inside the checkout** and — because the
-package isn't published to npm yet — it **builds a local artifact and installs that** for
-you (no manual `build:portable` or `PORTABLE_INSTALL_SOURCE` needed). Then, from any
-directory:
+then installs the CLI (the published [`@volter-ai/portable.dev`](https://www.npmjs.com/package/@volter-ai/portable.dev)
+package by default; run with **no arguments from inside the checkout** to **build a local
+artifact and install that** instead — no manual `build:portable` or
+`PORTABLE_INSTALL_SOURCE` needed). Then, from any directory:
 
 ```bash
 portable                 # start the runtime + show the pairing QR
@@ -252,9 +254,6 @@ running `portable`, run the install under an inactivity watchdog with retries (s
 npm-registry connection can't hang forever), clear a stale global package pin that would
 otherwise conflict, fail fast with the real error on a genuine not-found (instead of
 retrying a 404 as if it were the network), and verify the installed shim actually resolves.
-
-> Once the package is published, install becomes a one-liner — `bun install -g
-@volter-ai/portable.dev`, or a hosted `curl … | bash` / `irm … | iex` bootstrap.
 
 ---
 
@@ -355,20 +354,21 @@ Pairing is **QR-only** — there is no PC list to pick from.
 annotated list. Everything below has a sensible default; set a value only when a specific
 situation applies. Put overrides in a `.env` at the repo root.
 
-| Variable                              | Default                        | Set it when…                                                                                                    |
-| ------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| `GITHUB_OAUTH_CLIENT_ID`              | _(none)_                       | GitHub wasn't auto-discovered and you want the in-terminal device-flow login (scopes `repo read:org`).          |
-| `JWT_SECRET`                          | _auto-generated + persisted_   | You want to pin a specific signing secret (e.g. reuse across reinstalls).                                       |
-| `PORTABLE_RELAY_URL`                  | `https://app.portable-dev.com` | You [self-host the relay](#self-hosting-the-relay) (or want a different hosted relay).                          |
-| `PORTABLE_PC_ID`                      | `pc_<uuid>` (persisted)        | You want a stable, human-chosen PC id (routing key, not a secret).                                              |
-| `PORTABLE_PC_LABEL`                   | _hostname_                     | You want a friendly display name for the PC.                                                                    |
-| `VGIT_PORT`                           | `4200`                         | The default port is taken. **⚠️ Never use `7878`** — it is reserved by the dev tooling.                         |
-| `WORKSPACE_DIR`                       | `~/claude-workspace`           | You want repos cloned somewhere else.                                                                           |
-| `DATA_DIR`                            | `~/.portable`                  | You want local SQLite + the secret store somewhere else.                                                        |
-| `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | _(auto-installed)_             | You want to point the in-chat browser at an existing Chrome/Chromium instead of the auto-provisioned one.       |
-| `CLAUDE_SESSION_IDLE_TTL_MS`          | `600000` (10m)                 | You want a different idle window before a live Claude subprocess is reaped (the session resumes transparently). |
-| `DEBUG`                               | `false`                        | You want verbose api logging.                                                                                   |
-| `SENTRY_DSN`                          | _(unset → disabled)_           | You want backend error reporting.                                                                               |
+| Variable                              | Default                      | Set it when…                                                                                                    |
+| ------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `GITHUB_OAUTH_CLIENT_ID`              | _(none)_                     | GitHub wasn't auto-discovered and you want the in-terminal device-flow login (scopes `repo read:org`).          |
+| `JWT_SECRET`                          | _auto-generated + persisted_ | You want to pin a specific signing secret (e.g. reuse across reinstalls).                                       |
+| `PORTABLE_E2E_PSK`                    | _auto-generated + persisted_ | You want to pin the end-to-end encryption pre-shared key (base64, 32 bytes; carried only in the pairing QR).    |
+| `PORTABLE_RELAY_URL`                  | `https://app.portable.dev`   | You [self-host the relay](#self-hosting-the-relay) (or want a different hosted relay).                          |
+| `PORTABLE_PC_ID`                      | `pc_<uuid>` (persisted)      | You want a stable, human-chosen PC id (routing key, not a secret).                                              |
+| `PORTABLE_PC_LABEL`                   | _hostname_                   | You want a friendly display name for the PC.                                                                    |
+| `VGIT_PORT`                           | `4200`                       | The default port is taken. **⚠️ Never use `7878`** — it is reserved by the dev tooling.                         |
+| `WORKSPACE_DIR`                       | `~/claude-workspace`         | You want repos cloned somewhere else.                                                                           |
+| `DATA_DIR`                            | `~/.portable`                | You want local SQLite + the secret store somewhere else.                                                        |
+| `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | _(auto-installed)_           | You want to point the in-chat browser at an existing Chrome/Chromium instead of the auto-provisioned one.       |
+| `CLAUDE_SESSION_IDLE_TTL_MS`          | `600000` (10m)               | You want a different idle window before a live Claude subprocess is reaped (the session resumes transparently). |
+| `DEBUG`                               | `false`                      | You want verbose api logging.                                                                                   |
+| `SENTRY_DSN`                          | _(unset → disabled)_         | You want backend error reporting.                                                                               |
 
 > **Env tip.** Start with **no `.env`**, run `bun run portable`, and read the launcher output.
 > If the AI is unavailable it will tell you exactly which credential is missing — only then add
@@ -424,6 +424,8 @@ packages/
 │            PairingIdentity.ts, TerminalUi.ts, prepareCredentials.ts, …}
 ├── mobile/      # Expo / React Native app — the only client (sign-in, scan QR, chat, repos)
 │   └── {app/ (Expo Router routes), src/features/*}
+├── gateway/     # The hosted relay (tunnel registry + reverse proxy) — runs at app.portable.dev,
+│                # not part of the local install (and not included in the open-source mirror)
 ```
 
 Deeper rules live in each package's `CLAUDE.md`.
@@ -432,8 +434,11 @@ Deeper rules live in each package's `CLAUDE.md`.
 
 ## Self-hosting the relay
 
-The default hosted relay can read your traffic (there's no app↔PC E2E). To keep everything on
-infrastructure you control, run your **own** gateway and point your PC and app at it:
+App↔PC traffic is end-to-end encrypted, so the hosted relay only forwards ciphertext — but if
+you also want the routing infrastructure itself on machines you control, you can run your
+**own** relay and point your PC and app at it. The relay's job is small: accept the PC's
+pcId-keyed tunnel registration and reverse-proxy app traffic to the PC's cloudflared tunnel
+(see [docs/encryption.md](docs/encryption.md) for what a relay can and cannot see):
 
 - **PC:** set `PORTABLE_RELAY_URL=https://relay.example.com` before `bun run portable`.
 - **App:** the scanned QR carries the relay address, so a PC registered with your relay pairs

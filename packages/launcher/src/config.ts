@@ -141,6 +141,13 @@ export interface ApiChildEnvOverrides {
    * `JWT_SECRET` from the env at startup).
    */
   jwtSecret?: string;
+  /**
+   * The E2E pre-shared key (base64) the launcher put in the pairing QR.
+   * Forwarded to the api child as `PORTABLE_E2E_PSK` so the PC side can
+   * authenticate + answer the phone's E2E handshakes (portable.dev#13). Like
+   * `JWT_SECRET`, it never leaves the PC over the network.
+   */
+  e2ePsk?: string;
   /** The resolved stable pcId — exposed to the api as `PORTABLE_PC_ID`. */
   pcId?: string;
   /** The hosted-relay base URL (self-host) — exposed as `PORTABLE_RELAY_URL`. */
@@ -279,6 +286,11 @@ export function buildApiChildEnv(
   // Share the launcher's data-path identity with the api child.
   if (overrides.jwtSecret) {
     env.JWT_SECRET = overrides.jwtSecret;
+  }
+  // The E2E pre-shared key the pairing QR carries (portable.dev#13) — the api
+  // needs it to authenticate + answer the phone's E2E handshakes.
+  if (overrides.e2ePsk) {
+    env.PORTABLE_E2E_PSK = overrides.e2ePsk;
   }
   if (overrides.pcId) {
     env.PORTABLE_PC_ID = overrides.pcId;

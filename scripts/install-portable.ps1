@@ -14,7 +14,7 @@
 
   `source` is any npm spec / tarball path / git url. With NO source given:
     - Run from inside the repo checkout -> it BUILDS a local artifact and installs
-      that (the package isn't published to npm yet, so this is the working path).
+      that (useful for testing local changes before they are published).
     - Run anywhere else (the hosted one-liner) -> installs `@volter-ai/portable.dev`.
 
   Reliability features (no silent hangs on other people's machines):
@@ -200,7 +200,7 @@ if (($env:Path -split ';') -notcontains $BunBin) { $env:Path = "$env:Path;$BunBi
 
 # 2b) Decide the install source (needs Bun for the local build):
 #       explicit arg/env  ->  honored as-is
-#       inside a checkout  ->  build a local artifact (npm package isn't published yet)
+#       inside a checkout  ->  build a local artifact from your working tree
 #       otherwise          ->  the published package (the hosted one-liner case)
 if ($ExplicitSource) {
   $Source = $ExplicitSource
@@ -262,7 +262,7 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
     if ((Get-Content $script:InstallLog -Raw -ErrorAction SilentlyContinue) -match '(?i)\b404\b|E404|not found') {
       Write-Host ''
       Write-Host "[portable] '$Source' was not found in the npm registry." -ForegroundColor Red
-      Write-Host "[portable] The package isn't published yet — install from a checkout instead:"
+      Write-Host "[portable] npm install failed — install from a checkout instead:"
       Write-Host '[portable]   git clone <repo>; cd mobile-vgit; bun install; scripts\install-portable.ps1'
       Write-Host '[portable] (run with no source, from inside the repo, and it builds + installs a local artifact).'
       Write-Host '[portable] Or point it at a built tarball:  $env:PORTABLE_INSTALL_SOURCE = ".\dist-portable\<pkg>.tgz"; scripts\install-portable.ps1'

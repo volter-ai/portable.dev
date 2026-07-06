@@ -56,6 +56,7 @@ const VALID_QR = JSON.stringify({
   gatewayBase: 'https://app.portable.dev',
   pcId: 'pc_charlie',
   token: 'pc-minted-jwt',
+  e2eKey: 'psk-base64',
 });
 
 const SAFE_AREA_METRICS = {
@@ -66,6 +67,9 @@ const SAFE_AREA_METRICS = {
 function connectedConfig(): PcConnectConfig {
   return {
     getConnectedPcId: async () => 'pc-1',
+    // A returning device renders the app only when it STILL holds the pcId's E2E
+    // key; a missing key self-heals back to the scanner (portable.dev#13).
+    getE2eKey: async () => 'psk-base64',
     onConnect: async () => true,
     onLink: async () => {},
   };
@@ -129,17 +133,63 @@ describe('PcConnectGateHost — disconnect', () => {
   });
 });
 
+describe('PcConnectGateHost — E2E-key self-heal (portable.dev#13)', () => {
+  it('connected PC WITH an E2E key renders the app', async () => {
+    const getE2eKey = jest.fn(async () => 'psk-base64');
+    renderHost({
+      getConnectedPcId: async () => 'pc-1',
+      getE2eKey,
+      onConnect: async () => true,
+      onLink: async () => {},
+    });
+
+    await waitFor(() => expect(screen.getByTestId('app-marker')).toBeTruthy());
+    expect(getE2eKey).toHaveBeenCalledWith('pc-1');
+    expect(screen.queryByTestId('pc-connect-landing')).toBeNull();
+  });
+
+  it('connected PC MISSING its E2E key (pre-E2E pairing) routes to the scanner, not the app', async () => {
+    const getE2eKey = jest.fn(async () => null);
+    renderHost({
+      getConnectedPcId: async () => 'pc-legacy',
+      getE2eKey,
+      onConnect: async () => true,
+      onLink: async () => {},
+    });
+
+    await waitFor(() => expect(screen.getByTestId('pc-connect-landing')).toBeTruthy());
+    expect(getE2eKey).toHaveBeenCalledWith('pc-legacy');
+    expect(screen.queryByTestId('app-marker')).toBeNull();
+  });
+
+  it('an unreadable keychain (getE2eKey throws) fails open to the scanner, not a wedged app', async () => {
+    const getE2eKey = jest.fn(async () => {
+      throw new Error('keychain unavailable');
+    });
+    renderHost({
+      getConnectedPcId: async () => 'pc-1',
+      getE2eKey,
+      onConnect: async () => true,
+      onLink: async () => {},
+    });
+
+    await waitFor(() => expect(screen.getByTestId('pc-connect-landing')).toBeTruthy());
+    expect(screen.queryByTestId('app-marker')).toBeNull();
+  });
+});
+
 describe('PcConnectGateHost — Apple reviewer fast path (D40)', () => {
-  const REVIEWER_TRIPLE = {
+  const REVIEWER_CREDS = {
     gatewayBase: 'https://app.portable.dev',
     pcId: 'reviewer-pc',
     token: 'reviewer-jwt',
+    e2eKey: 'reviewer-psk-base64',
   };
 
-  it('reviewer match: links + connects WITHOUT mounting the QR scanner', async () => {
+  it('reviewer match: links (JWT + E2E key) + connects WITHOUT mounting the QR scanner', async () => {
     const onLink = jest.fn(async () => {});
     const onConnect = jest.fn(async () => true);
-    const getReviewerCredentials = jest.fn(async () => REVIEWER_TRIPLE);
+    const getReviewerCredentials = jest.fn(async () => REVIEWER_CREDS);
 
     renderHost({
       getConnectedPcId: async () => null,
@@ -151,11 +201,59 @@ describe('PcConnectGateHost — Apple reviewer fast path (D40)', () => {
     await waitFor(() => expect(screen.getByTestId('app-marker')).toBeTruthy());
     expect(getReviewerCredentials).toHaveBeenCalledTimes(1);
     // Reuses the production seams verbatim: onLink (= linkPc save-only) then onConnect.
-    expect(onLink).toHaveBeenCalledWith(REVIEWER_TRIPLE);
+    // The E2E key rides along — mandatory E2E makes a keyless pairing unusable.
+    expect(onLink).toHaveBeenCalledWith(REVIEWER_CREDS);
     expect(onConnect).toHaveBeenCalledWith('reviewer-pc');
     // The QR landing / scanner are skipped entirely.
     expect(screen.queryByTestId('pc-connect-landing')).toBeNull();
     expect(screen.queryByTestId('qr-scanner')).toBeNull();
+  });
+
+  it('reviewer creds WITHOUT an e2eKey abort the bypass → QR landing, nothing linked (portable.dev#15)', async () => {
+    const onLink = jest.fn(async () => {});
+    const onConnect = jest.fn(async () => true);
+    // An outdated gateway / static-env fallback that still answers keyless: linking
+    // it would strand the app on a pairing every /api/* call rejects (mandatory E2E).
+    const getReviewerCredentials = jest.fn(async () => ({
+      gatewayBase: 'https://app.portable.dev',
+      pcId: 'reviewer-pc',
+      token: 'reviewer-jwt',
+    }));
+
+    renderHost({
+      getConnectedPcId: async () => null,
+      onConnect,
+      onLink,
+      getReviewerCredentials,
+    });
+
+    await waitFor(() => expect(screen.getByTestId('pc-connect-landing')).toBeTruthy());
+    expect(onLink).not.toHaveBeenCalled();
+    expect(onConnect).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('app-marker')).toBeNull();
+  });
+
+  it('a stored pairing MISSING its E2E key self-heals through the reviewer fast path (no scanner)', async () => {
+    // The review device paired before E2E existed: it holds the reviewer pcId +
+    // JWT but no E2E key. The host must retry the fast path (which now republishes
+    // the key) BEFORE dead-ending at the scanner (portable.dev#15).
+    const onLink = jest.fn(async () => {});
+    const onConnect = jest.fn(async () => true);
+    const getReviewerCredentials = jest.fn(async () => REVIEWER_CREDS);
+
+    renderHost({
+      getConnectedPcId: async () => 'reviewer-pc',
+      getE2eKey: async () => null,
+      onConnect,
+      onLink,
+      getReviewerCredentials,
+    });
+
+    await waitFor(() => expect(screen.getByTestId('app-marker')).toBeTruthy());
+    expect(getReviewerCredentials).toHaveBeenCalledTimes(1);
+    expect(onLink).toHaveBeenCalledWith(REVIEWER_CREDS);
+    expect(onConnect).toHaveBeenCalledWith('reviewer-pc');
+    expect(screen.queryByTestId('pc-connect-landing')).toBeNull();
   });
 
   it('non-reviewer (null / 403): falls through to the QR landing, no link/connect', async () => {
@@ -199,7 +297,7 @@ describe('PcConnectGateHost — Apple reviewer fast path (D40)', () => {
       getConnectedPcId: async () => null,
       onConnect,
       onLink: async () => {},
-      getReviewerCredentials: async () => REVIEWER_TRIPLE,
+      getReviewerCredentials: async () => REVIEWER_CREDS,
     });
 
     await waitFor(() => expect(screen.getByTestId('pc-connect-landing')).toBeTruthy());
@@ -211,6 +309,7 @@ describe('PcConnectGateHost — Apple reviewer fast path (D40)', () => {
 
     renderHost({
       getConnectedPcId: async () => 'pc-1',
+      getE2eKey: async () => 'psk-base64',
       onConnect: async () => true,
       onLink: async () => {},
       getReviewerCredentials,

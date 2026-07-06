@@ -65,6 +65,7 @@ const VALID_QR = JSON.stringify({
   gatewayBase: 'https://app.portable.dev',
   pcId: 'pc_charlie',
   token: 'pc-minted-jwt',
+  e2eKey: 'psk-base64',
 });
 
 describe('parseQrPayload', () => {
@@ -73,7 +74,14 @@ describe('parseQrPayload', () => {
       gatewayBase: 'https://app.portable.dev',
       pcId: 'pc_charlie',
       token: 'pc-minted-jwt',
+      e2eKey: 'psk-base64',
     });
+  });
+
+  it('rejects a pre-E2E payload without e2eKey (portable.dev#13 hard cutover)', () => {
+    expect(
+      parseQrPayload(JSON.stringify({ gatewayBase: 'https://x.dev', pcId: 'p', token: 't' }))
+    ).toBeNull();
   });
 
   it('rejects non-JSON', () => {
@@ -86,13 +94,15 @@ describe('parseQrPayload', () => {
 
   it('rejects a non-http gatewayBase', () => {
     expect(
-      parseQrPayload(JSON.stringify({ gatewayBase: 'ftp://x', pcId: 'p', token: 't' }))
+      parseQrPayload(JSON.stringify({ gatewayBase: 'ftp://x', pcId: 'p', token: 't', e2eKey: 'k' }))
     ).toBeNull();
   });
 
   it('rejects an empty token', () => {
     expect(
-      parseQrPayload(JSON.stringify({ gatewayBase: 'https://x.dev', pcId: 'p', token: '' }))
+      parseQrPayload(
+        JSON.stringify({ gatewayBase: 'https://x.dev', pcId: 'p', token: '', e2eKey: 'k' })
+      )
     ).toBeNull();
   });
 
@@ -116,6 +126,7 @@ describe('QRScannerGate', () => {
       gatewayBase: 'https://app.portable.dev',
       pcId: 'pc_charlie',
       token: 'pc-minted-jwt',
+      e2eKey: 'psk-base64',
     });
   });
 
@@ -169,6 +180,7 @@ describe('PcConnectGate', () => {
         gatewayBase: 'https://app.portable.dev',
         pcId: 'pc_charlie',
         token: 'pc-minted-jwt',
+        e2eKey: 'psk-base64',
       })
     );
     // After the JWT is saved, the host is told to connect this pcId.

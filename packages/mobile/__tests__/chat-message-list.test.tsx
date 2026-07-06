@@ -75,7 +75,12 @@ import type { ClaudeStreamBlock } from '@vgit2/shared/socket';
 import type { AgentSetup, MessageAction } from '@vgit2/shared/types';
 import { AUTOPILOT_COMPLETION_INSTRUCTION } from '@vgit2/shared/utils/autopilotHelpers';
 
-import { MessageList, useChatMessagesStore, useChatStream } from '../src/features/chat';
+import {
+  computeScrollIntoViewDelta,
+  MessageList,
+  useChatMessagesStore,
+  useChatStream,
+} from '../src/features/chat';
 import { SocketProvider, useSocket, useSocketStore } from '../src/features/socket';
 import type { AppStateLike, NetInfoLike, AppStateStatus } from '../src/features/socket';
 import { type MockSocketIoModule } from '../src/test';
@@ -1233,5 +1238,129 @@ describe('working-on-pc indicator (rev12 presence)', () => {
     render(<MessageList messages={[assistantMessage]} isWorking status="running" workingOnPc />);
     expect(screen.queryByTestId('working-on-pc-indicator')).toBeNull();
     expect(screen.getAllByTestId('chat-typing-indicator')).toHaveLength(1);
+  });
+});
+
+// ── Issue #10: the interactive ask-user prompt rides the transcript scroller ──
+//
+// The prompt used to mount as a fixed sibling BELOW the FlatList: with several
+// stacked questions it overflowed the column with no scroll owner (Submit
+// unreachable) and no scroller for keyboard avoidance (the keyboard covered the
+// "Other" input). The fix folds it into the list as the `footer` prop, and
+// `scrollFooterInputIntoView` nudges a focused footer input into the list's
+// visible (keyboard-shrunk) window.
+describe('interactive footer (issue #10)', () => {
+  const runScrollNow = (cb: () => void) => cb();
+  const msg = { id: 'm1', role: 'assistant' as const, blocks: [] };
+
+  /** Spy on the FlatList instance's scrollToEnd (the growth auto-snap). */
+  function spyOnScrollToEnd(): jest.SpyInstance {
+    const list = screen.UNSAFE_getByType(FlatList as never);
+    return jest.spyOn(list.instance, 'scrollToEnd').mockImplementation(() => undefined);
+  }
+  function fireContentSize(height: number): void {
+    const list = screen.UNSAFE_getByType(FlatList as never);
+    act(() => list.props.onContentSizeChange(0, height));
+  }
+
+  it('renders the injected footer exactly once, inside the list content', () => {
+    render(<MessageList messages={[msg]} footer={<Text testID="footer-probe">prompt</Text>} />);
+    // Exactly one, and it is a descendant of the FlatList (scrollable content) — not a
+    // sibling below it (the pre-fix layout that broke reaching Submit).
+    expect(within(screen.getByTestId('message-list')).getAllByTestId('footer-probe')).toHaveLength(
+      1
+    );
+  });
+
+  // Issue #10 regression: with a prompt whose content overflows the viewport, an in-form
+  // edit (toggling "Other" → a TextInput mounts → content grows) must NOT snap the list to
+  // the bottom, or the just-revealed input flies off-screen. The run is paused during an
+  // ask prompt, so `footerActive` marks "suppress the always-snap-on-growth".
+  it('does NOT snap to the bottom on footer-internal growth while footerActive', () => {
+    render(
+      <MessageList
+        messages={[msg]}
+        footerActive
+        footer={<Text testID="footer-probe">prompt</Text>}
+        scheduleScroll={runScrollNow}
+      />
+    );
+    const scrollToEnd = spyOnScrollToEnd();
+    // The prompt first appearing is revealed ONCE (footerActive was already true at mount →
+    // the initial 0→H growth is the reveal).
+    fireContentSize(1200);
+    expect(scrollToEnd).toHaveBeenCalledTimes(1);
+    scrollToEnd.mockClear();
+    // A later in-form growth (an "Other" input mounts) must be ignored — no yank.
+    fireContentSize(1240);
+    expect(scrollToEnd).not.toHaveBeenCalled();
+  });
+
+  it('reveals the prompt with one snap when footerActive flips false→true', () => {
+    const { rerender } = render(<MessageList messages={[msg]} scheduleScroll={runScrollNow} />);
+    const scrollToEnd = spyOnScrollToEnd();
+    fireContentSize(800); // steady-state measure (no prompt yet)
+    scrollToEnd.mockClear();
+    // Prompt appears → footerActive true → the next growth reveals it once…
+    rerender(
+      <MessageList
+        messages={[msg]}
+        footerActive
+        footer={<Text testID="footer-probe">prompt</Text>}
+        scheduleScroll={runScrollNow}
+      />
+    );
+    fireContentSize(1100);
+    expect(scrollToEnd).toHaveBeenCalledTimes(1);
+    scrollToEnd.mockClear();
+    // …and the following in-form growth is suppressed.
+    fireContentSize(1140);
+    expect(scrollToEnd).not.toHaveBeenCalled();
+  });
+
+  it('still snaps on transcript growth when no prompt is active (footerActive falsy)', () => {
+    render(<MessageList messages={[msg]} scheduleScroll={runScrollNow} />);
+    const scrollToEnd = spyOnScrollToEnd();
+    fireContentSize(800);
+    scrollToEnd.mockClear();
+    fireContentSize(1000); // a streamed block grows the transcript
+    expect(scrollToEnd).toHaveBeenCalledTimes(1);
+  });
+
+  // The measured-scroll math: positive = scroll down (content moves up),
+  // negative = scroll up, 0 = already visible. 12px margin.
+  describe('computeScrollIntoViewDelta', () => {
+    const viewport = { top: 100, bottom: 500 };
+
+    it('scrolls down when the target sits below the visible bottom', () => {
+      expect(computeScrollIntoViewDelta({ top: 700, bottom: 736 }, viewport)).toBe(248);
+    });
+
+    it('scrolls up when the target sits above the visible top', () => {
+      expect(computeScrollIntoViewDelta({ top: 60, bottom: 96 }, viewport)).toBe(-52);
+    });
+
+    it('does not scroll when the target is already fully visible', () => {
+      expect(computeScrollIntoViewDelta({ top: 200, bottom: 236 }, viewport)).toBe(0);
+    });
+
+    it('honors the margin at the bottom edge (target flush with the fold)', () => {
+      // Bottom at exactly the viewport bottom still needs the 12px margin.
+      expect(computeScrollIntoViewDelta({ top: 464, bottom: 500 }, viewport)).toBe(12);
+    });
+
+    it('honors the margin at the top edge', () => {
+      expect(computeScrollIntoViewDelta({ top: 104, bottom: 140 }, viewport)).toBe(-8);
+    });
+
+    it('prefers aligning the bottom when the target is taller than the viewport', () => {
+      // Both edges violated (target 100..560 vs viewport 100..500): overBottom wins first,
+      // scrolling down so the target's bottom + margin is visible (top spills above).
+      expect(computeScrollIntoViewDelta({ top: 100, bottom: 560 }, viewport)).toBe(72);
+    });
+
+    it('honors a non-default margin argument', () => {
+      expect(computeScrollIntoViewDelta({ top: 700, bottom: 736 }, viewport, 20)).toBe(256);
+    });
   });
 });

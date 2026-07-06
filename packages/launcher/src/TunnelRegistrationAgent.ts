@@ -97,6 +97,15 @@ export interface TunnelRegistrationAgentOptions {
    * `PORTABLE_REVIEWER_PUBLISH` ({@link resolveReviewerPublish}).
    */
   reviewerToken?: string;
+  /**
+   * Apple-reviewer opt-in: the E2E pre-shared key (base64) to PUBLISH alongside
+   * `reviewerToken` (the wire field is `reviewerE2eKey`). The QR-skip pairing is
+   * unusable without it — E2E is mandatory on the relay data path, and the key
+   * otherwise travels ONLY inside the pairing QR (portable.dev#15). Same opt-in,
+   * default OFF, same re-send-on-register / never-on-heartbeat semantics as
+   * `reviewerToken`.
+   */
+  reviewerE2eKey?: string;
   /** Heartbeat cadence (ms). Default {@link DEFAULT_HEARTBEAT_MS}. */
   heartbeatMs?: number;
   /** First retry backoff (ms). Default 1000. */
@@ -135,6 +144,7 @@ export class TunnelRegistrationAgent {
   private readonly relayBaseUrl: string;
   private readonly ttlMs: number;
   private readonly reviewerToken?: string;
+  private readonly reviewerE2eKey?: string;
   private readonly heartbeatMs: number;
   private readonly initialBackoffMs: number;
   private readonly maxBackoffMs: number;
@@ -158,6 +168,7 @@ export class TunnelRegistrationAgent {
     this.relayBaseUrl = (options.relayBaseUrl ?? resolveRelayBaseUrl()).replace(/\/$/, '');
     this.ttlMs = options.ttlMs ?? DEFAULT_REGISTRATION_TTL_MS;
     this.reviewerToken = options.reviewerToken;
+    this.reviewerE2eKey = options.reviewerE2eKey;
     this.heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
     this.initialBackoffMs = options.initialBackoffMs ?? 1000;
     this.maxBackoffMs = options.maxBackoffMs ?? 30_000;
@@ -263,13 +274,18 @@ export class TunnelRegistrationAgent {
         label: this.label,
         ttlMs: this.ttlMs,
       };
-      // Apple-reviewer opt-in: publish the launcher-minted data-path JWT so the
-      // disposable reviewer box can serve it from the reviewer route. Default OFF
-      // (reviewerToken undefined) → a NORMAL PC's register body is byte-unchanged
-      // and the gateway holds NO data-path JWT (invariant). Re-sent on every
-      // (re-)register incl. rotation; the heartbeat body never carries it.
+      // Apple-reviewer opt-in: publish the launcher-minted data-path JWT (and the
+      // E2E PSK — mandatory-E2E pairing is unusable without it, portable.dev#15)
+      // so the disposable reviewer box can serve them from the reviewer route.
+      // Default OFF (both undefined) → a NORMAL PC's register body is
+      // byte-unchanged and the gateway holds NO data-path credentials (invariant).
+      // Re-sent on every (re-)register incl. rotation; the heartbeat body never
+      // carries them.
       if (this.reviewerToken) {
         body.reviewerToken = this.reviewerToken;
+      }
+      if (this.reviewerE2eKey) {
+        body.reviewerE2eKey = this.reviewerE2eKey;
       }
 
       const result = await this.post('/tunnel/register', body);
