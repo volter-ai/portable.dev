@@ -1,0 +1,15 @@
+# Bun test config for runs pinned to this package's directory — i.e.
+# `bun --cwd packages/api test` (scripts/test.sh, the `test:raw` root script, and
+# this package's own `test` script).
+#
+# Bun resolves bunfig.toml from the CURRENT WORKING DIRECTORY and does NOT walk up
+# to the repo root. So a `--cwd packages/api` run would otherwise find NO bunfig
+# and skip the root preload — and with it the WORKSPACE_DIR/DATA_DIR isolation +
+# guard — leaving the suite free to delete the developer's real workspace
+# (issue #1563). This file loads the same preload (path relative to packages/api).
+#
+# Keep the shared knobs in sync with the root bunfig.toml [test] block.
+[test]
+timeout = 120000
+preload = ["./tests/setup/preload.ts"]
+coverage = false

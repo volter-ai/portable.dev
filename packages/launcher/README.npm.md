@@ -48,8 +48,14 @@ the QR. Re-opening the app later reconnects automatically — no re-scan needed.
 | `portable --version` | Print the installed CLI version.                                                                                                                         |
 | `portable help`      | Show help (`--help` / `-h`).                                                                                                                             |
 
-Flags: `--debug` / `-d` streams the api logs to your terminal (useful to watch your phone
-connect) and prints the QR once instead of the live screen.
+Flags:
+
+- `--debug` / `-d` — streams the api logs to your terminal (useful to watch your phone connect)
+  and prints the QR once instead of the live screen.
+- `--ngrok` — publishes your PC through **ngrok** instead of cloudflared (or set
+  `PORTABLE_TUNNEL_PROVIDER=ngrok`). ngrok must already be installed **and** authenticated
+  (`ngrok config add-authtoken <token>` or `NGROK_AUTHTOKEN`); the launcher fails fast rather
+  than silently falling back to cloudflared. Handy when a network blocks `*.trycloudflare.com`.
 
 ## How it works
 
@@ -61,7 +67,8 @@ relay never holds your AI credential or your data — it only forwards traffic. 
 **direct** to `api.anthropic.com` with your own Claude account.
 
 To keep everything on infrastructure you control, you can self-host the relay and point the
-CLI at it with `PORTABLE_RELAY_URL`.
+CLI at it with `PORTABLE_RELAY_URL`. Prefer a different tunnel? `portable --ngrok` fronts your
+PC with ngrok instead of Cloudflare (see Flags above).
 
 ## Links
 

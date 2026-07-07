@@ -280,3 +280,50 @@ describe('TunnelRouter.waitForFirstRegistration', () => {
     expect(await router.waitForFirstRegistration(10)).toBe(false);
   });
 });
+
+describe('TunnelRouter — provider-agnostic makeTunnel/tunnelBin seam', () => {
+  it('uses makeTunnel and forwards tunnelBin as the spawned bin (ngrok path)', async () => {
+    const onUrlRef: { fn?: (url: string) => void } = {};
+    let receivedBin: string | undefined;
+    const fake = makeFakeCloudflared({ firstUrl: 'https://r1.ngrok-free.app', onUrlRef });
+    const registered: string[] = [];
+    const router = new TunnelRouter({
+      apiBaseUrl: 'http://127.0.0.1:4200',
+      onTunnelUrl: (u) => registered.push(u),
+      tunnelBin: '/opt/ngrok',
+      makeTunnel: (o) => {
+        receivedBin = o.bin;
+        onUrlRef.fn = o.onUrl;
+        return fake as unknown as CloudflaredTunnel;
+      },
+      firstUrlTimeoutMs: 1000,
+      log: () => {},
+    });
+    await router.start();
+    expect(receivedBin).toBe('/opt/ngrok');
+    expect(router.getPublicUrl()).toBe('https://r1.ngrok-free.app');
+    expect(registered).toEqual(['https://r1.ngrok-free.app']);
+  });
+
+  it('makeTunnel takes precedence over the deprecated makeCloudflaredTunnel alias', async () => {
+    let usedGeneric = false;
+    let usedAlias = false;
+    const fake = makeFakeCloudflared({ firstUrl: 'https://r1.trycloudflare.com' });
+    const router = new TunnelRouter({
+      apiBaseUrl: 'http://127.0.0.1:4200',
+      makeTunnel: () => {
+        usedGeneric = true;
+        return fake as unknown as CloudflaredTunnel;
+      },
+      makeCloudflaredTunnel: () => {
+        usedAlias = true;
+        return fake as unknown as CloudflaredTunnel;
+      },
+      firstUrlTimeoutMs: 1000,
+      log: () => {},
+    });
+    await router.start();
+    expect(usedGeneric).toBe(true);
+    expect(usedAlias).toBe(false);
+  });
+});

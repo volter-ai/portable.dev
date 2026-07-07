@@ -2,6 +2,8 @@ import { type ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+import type { Tunnel } from './Tunnel.js';
+
 /**
  * Spawn + supervise cloudflared.
  *
@@ -158,7 +160,7 @@ export interface CloudflaredTunnelOptions {
   log?: (line: string) => void;
 }
 
-export class CloudflaredTunnel {
+export class CloudflaredTunnel implements Tunnel {
   private readonly localUrl: string;
   private readonly onUrl?: (url: string) => void;
   private readonly spawnImpl: SpawnImpl;

@@ -15,16 +15,20 @@ import {
 import { ensureChromium } from './ChromiumProvisioner.js';
 import { installClaudeHooks, type InstallClaudeHooksResult } from './ClaudeHooksInstaller.js';
 import { ensureCloudflared } from './CloudflaredProvisioner.js';
+import { CloudflaredTunnel } from './CloudflaredTunnel.js';
 import {
   resolveApiBaseUrl,
   resolveApiPort,
   resolveOperatorWorkspaceDir,
   resolveRelayBaseUrl,
   resolveReviewerPublish,
+  resolveUseNgrok,
 } from './config.js';
 import { startConnectionWatch, type ConnectionWatcherHandle } from './ConnectionWatcher.js';
 import { internalBridgePath, mintInternalSecret, writeInternalBridge } from './InternalBridge.js';
 import { ensureSidecarRegistration } from './McpSidecarRegistrar.js';
+import { ensureNgrok } from './NgrokProvisioner.js';
+import { NgrokTunnel } from './NgrokTunnel.js';
 import {
   ensureE2ePsk,
   ensureJwtSecret,
@@ -51,6 +55,8 @@ import {
 } from './TunnelHealthMonitor.js';
 import { TunnelRegistrationAgent, resolvePcId, resolvePcLabel } from './TunnelRegistrationAgent.js';
 import { TunnelRouter } from './TunnelRouter.js';
+
+import type { Tunnel, TunnelOptions } from './Tunnel.js';
 
 /**
  * The `portable start` launcher.
@@ -578,6 +584,14 @@ export interface CreateLauncherOptions {
    * The `apiLog` sink is expected to tee to the terminal (set up in the CLI).
    */
   debug?: boolean;
+  /**
+   * `portable --ngrok` — use ngrok as the public tunnel provider instead of the
+   * default cloudflared. Layered with `PORTABLE_TUNNEL_PROVIDER=ngrok` via
+   * {@link resolveUseNgrok}. When on, `createLauncher` runs the {@link ensureNgrok}
+   * preflight, which **HARD-FAILS** (surfaced by `cli.ts` as a fatal) if ngrok is not
+   * installed or not authenticated — there is no fallback to cloudflared.
+   */
+  ngrok?: boolean;
 }
 
 /**
@@ -725,11 +739,26 @@ export async function createLauncher(options: CreateLauncherOptions = {}): Promi
     };
   };
 
-  // Auto-provision cloudflared (download the official static binary once via the
-  // `cloudflared` package, cross-platform) so the user need NOT install it via
-  // winget/brew/apt. Falls back to an already-installed cloudflared (PATH / win32
-  // probe / PORTABLE_CLOUDFLARED_BIN) when the download is unavailable (offline).
-  const cloudflaredBin = await ensureCloudflared({ env, log });
+  // Resolve the tunnel provider that fronts the PC's public ingress. Default is
+  // cloudflared (auto-provisioned, no account). `--ngrok` / PORTABLE_TUNNEL_PROVIDER
+  // selects ngrok (opt-in): a HARD preflight (ensureNgrok) that throws — surfaced by
+  // cli.ts as a fatal — if ngrok is not installed or not authenticated. NO fallback
+  // to cloudflared: the user explicitly asked for ngrok.
+  const useNgrok = resolveUseNgrok(env, options.ngrok ?? false);
+  let tunnelBin: string;
+  let makeTunnel: (opts: TunnelOptions) => Tunnel;
+  if (useNgrok) {
+    log('[launcher] tunnel provider: ngrok (--ngrok)');
+    tunnelBin = await ensureNgrok({ env, log });
+    makeTunnel = (opts) => new NgrokTunnel(opts);
+  } else {
+    // Auto-provision cloudflared (download the official static binary once via the
+    // `cloudflared` package, cross-platform) so the user need NOT install it via
+    // winget/brew/apt. Falls back to an already-installed cloudflared (PATH / win32
+    // probe / PORTABLE_CLOUDFLARED_BIN) when the download is unavailable (offline).
+    tunnelBin = await ensureCloudflared({ env, log });
+    makeTunnel = (opts) => new CloudflaredTunnel(opts);
+  }
 
   const apiProcess = new ApiProcess({
     env,
@@ -840,10 +869,11 @@ export async function createLauncher(options: CreateLauncherOptions = {}): Promi
         apiBaseUrl,
         onTunnelUrl: (url) => agent.onTunnelUrl(url),
         onStop: () => agent.stop(),
-        // Auto-provisioned cloudflared path (download-once via the `cloudflared`
-        // package, else an installed binary / PORTABLE_CLOUDFLARED_BIN) — resolved
-        // above by ensureCloudflared so it's ready before the tunnel starts.
-        cloudflaredBin,
+        // The resolved tunnel provider (cloudflared by default, ngrok when --ngrok):
+        // the binary path + the concrete tunnel factory were both resolved above so
+        // they're ready before the tunnel starts.
+        tunnelBin,
+        makeTunnel,
         log: apiLog,
       });
     },

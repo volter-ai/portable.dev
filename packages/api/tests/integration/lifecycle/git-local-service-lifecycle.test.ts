@@ -35,6 +35,8 @@ import path from 'path';
 import os from 'os';
 import { getUserWorkspaceDir } from '@vgit2/shared/constants';
 
+import { assertSafeTestDir } from '../../setup/assertSafeTestDir';
+
 // Mock Octokit (GitHub API client) BEFORE importing services
 mock.module('@octokit/rest', () => {
   return {
@@ -330,8 +332,12 @@ describe('Git Local Service Lifecycle - Repository Management Workflow', () => {
       // Ignore cleanup errors
     }
 
-    // Clean up test workspace directory
+    // Clean up test workspace directory. getUserWorkspaceDir() returns
+    // WORKSPACE_DIR itself after the rev9 D27 per-user-layer collapse, so this
+    // deletes the WHOLE workspace ROOT — refuse unless it is a throwaway temp dir
+    // so a mis-resolved WORKSPACE_DIR can never wipe the real repo (issue #1563).
     try {
+      assertSafeTestDir('testWorkspaceDir', testWorkspaceDir);
       await fs.rm(testWorkspaceDir, { recursive: true, force: true });
     } catch (error) {
       // Ignore cleanup errors
@@ -741,24 +747,22 @@ describe('Git Local Service Lifecycle - Repository Management Workflow', () => {
      * Coverage: getLocalRepositories (empty case)
      */
 
-    // Create a new user with empty workspace
-    const emptyUserId = `test-empty-${Date.now()}@example.com`;
-    const emptyWorkspace = getUserWorkspaceDir(emptyUserId);
-
-    // Ensure workspace doesn't exist
+    // Use a dedicated, self-owned EMPTY temp dir and scan it through the
+    // getLocalRepositoriesIn(root) seam. getUserWorkspaceDir() now collapses to
+    // the shared WORKSPACE_DIR root (rev9 D27), so deleting it to force emptiness
+    // would nuke the whole workspace — see issue #1563.
+    const emptyWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), 'git-local-empty-ws-'));
     try {
+      const repos = await gitLocalService.getLocalRepositoriesIn(emptyWorkspace);
+
+      expect(repos).toBeDefined();
+      expect(Array.isArray(repos)).toBe(true);
+      expect(repos.length).toBe(0);
+
+      console.log('✅ Empty workspace handling verified');
+    } finally {
       await fs.rm(emptyWorkspace, { recursive: true, force: true });
-    } catch {
-      // Ignore if doesn't exist
     }
-
-    const repos = await gitLocalService.getLocalRepositories(emptyUserId);
-
-    expect(repos).toBeDefined();
-    expect(Array.isArray(repos)).toBe(true);
-    expect(repos.length).toBe(0);
-
-    console.log('✅ Empty workspace handling verified');
   });
 
   it('should handle diff stats correctly', async () => {

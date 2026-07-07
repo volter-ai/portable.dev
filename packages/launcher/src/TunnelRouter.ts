@@ -1,19 +1,21 @@
 import { type spawn } from 'child_process';
 
 import { CloudflaredTunnel, type CloudflaredTunnelOptions } from './CloudflaredTunnel.js';
+import { TunnelFatalError, type Tunnel, type TunnelOptions } from './Tunnel.js';
 
 /**
- * Tunnel-router (cloudflared, no-Clerk).
+ * Tunnel-router (provider-agnostic, no-Clerk).
  *
- * The launcher IS the local tunnel-router gateway: it owns the cloudflared
+ * The launcher IS the local tunnel-router gateway: it owns the tunnel
  * lifecycle and the registration agent that keeps the gateway pointed at the
  * PC's current tunnel URL. Registration is `pcId`-keyed with NO Clerk
  * identity — Clerk is gone from the PC entirely.
  *
- * `start()` spawns + supervises cloudflared (via {@link CloudflaredTunnel}),
- * captures the rotating `*.trycloudflare.com` URL, and hands every URL (first
- * capture AND each rotation/restart) to the registration-agent seam
- * ({@link TunnelRouterOptions.onTunnelUrl}, wired to {@link TunnelRegistrationAgent}).
+ * `start()` spawns + supervises the tunnel via the injected {@link Tunnel} provider
+ * ({@link CloudflaredTunnel} by default, {@link NgrokTunnel} when `--ngrok` — selected
+ * by `createLauncher` via `makeTunnel` + `tunnelBin`), captures its rotating public URL,
+ * and hands every URL (first capture AND each rotation/restart) to the registration-agent
+ * seam ({@link TunnelRouterOptions.onTunnelUrl}, wired to {@link TunnelRegistrationAgent}).
  */
 
 export interface TunnelRouterOptions {
@@ -30,11 +32,16 @@ export interface TunnelRouterOptions {
    * AFTER cloudflared is stopped, so the agent can cancel its heartbeat timers.
    */
   onStop?: () => void | Promise<void>;
-  /** child_process.spawn seam, forwarded to cloudflared (injected in tests). */
+  /** child_process.spawn seam, forwarded to the tunnel (injected in tests). */
   spawnImpl?: typeof spawn;
-  /** cloudflared presence-detection seam (injected in tests). */
+  /** tunnel presence-detection seam (injected in tests). */
   detectImpl?: () => Promise<boolean>;
-  /** cloudflared executable. Defaults to 'cloudflared'. */
+  /**
+   * The tunnel executable to spawn. Provider-agnostic (cloudflared or ngrok). Prefer
+   * this over the deprecated {@link cloudflaredBin} alias.
+   */
+  tunnelBin?: string;
+  /** @deprecated Use {@link tunnelBin}. Kept for back-compat (cloudflared path). */
   cloudflaredBin?: string;
   /** How long start() waits for the first URL before continuing (ms). Default 30000. */
   firstUrlTimeoutMs?: number;
@@ -44,7 +51,14 @@ export interface TunnelRouterOptions {
    * agent's own ~30s verify budget). Lowered in tests to keep them fast.
    */
   firstRegistrationTimeoutMs?: number;
-  /** Factory for the cloudflared supervisor (test seam). Defaults to the real impl. */
+  /**
+   * Factory for the tunnel supervisor (test seam / provider selector). Defaults to a
+   * {@link CloudflaredTunnel}; `createLauncher` passes an {@link NgrokTunnel} factory
+   * when `--ngrok` is active. Prefer this over the deprecated
+   * {@link makeCloudflaredTunnel} alias.
+   */
+  makeTunnel?: (opts: TunnelOptions) => Tunnel;
+  /** @deprecated Use {@link makeTunnel}. Kept for back-compat (cloudflared path). */
   makeCloudflaredTunnel?: (opts: CloudflaredTunnelOptions) => CloudflaredTunnel;
   /** Line sink for tunnel-router output. Defaults to console.log. */
   log?: (line: string) => void;
@@ -56,13 +70,13 @@ export class TunnelRouter {
   private readonly onStop?: () => void | Promise<void>;
   private readonly spawnImpl?: typeof spawn;
   private readonly detectImpl?: () => Promise<boolean>;
-  private readonly cloudflaredBin?: string;
+  private readonly tunnelBin?: string;
   private readonly firstUrlTimeoutMs: number;
   private readonly firstRegistrationTimeoutMs: number;
-  private readonly makeCloudflaredTunnel: (opts: CloudflaredTunnelOptions) => CloudflaredTunnel;
+  private readonly makeTunnel: (opts: TunnelOptions) => Tunnel;
   private readonly log: (line: string) => void;
 
-  private tunnel: CloudflaredTunnel | null = null;
+  private tunnel: Tunnel | null = null;
   private publicUrl: string | null = null;
   private started = false;
   /**
@@ -79,11 +93,13 @@ export class TunnelRouter {
     this.onStop = options.onStop;
     this.spawnImpl = options.spawnImpl;
     this.detectImpl = options.detectImpl;
-    this.cloudflaredBin = options.cloudflaredBin;
+    this.tunnelBin = options.tunnelBin ?? options.cloudflaredBin;
     this.firstUrlTimeoutMs = options.firstUrlTimeoutMs ?? 30_000;
     this.firstRegistrationTimeoutMs = options.firstRegistrationTimeoutMs ?? 45_000;
-    this.makeCloudflaredTunnel =
-      options.makeCloudflaredTunnel ?? ((opts) => new CloudflaredTunnel(opts));
+    this.makeTunnel =
+      options.makeTunnel ??
+      options.makeCloudflaredTunnel ??
+      ((opts) => new CloudflaredTunnel(opts));
     this.log = options.log ?? ((line) => console.log(line));
     this.firstRegistrationPromise = new Promise((resolve) => {
       this.resolveFirstRegistration = resolve;
@@ -110,12 +126,12 @@ export class TunnelRouter {
     if (this.started) return;
     this.started = true;
 
-    this.tunnel = this.makeCloudflaredTunnel({
+    this.tunnel = this.makeTunnel({
       localUrl: this.apiBaseUrl,
       onUrl: (url) => this.handleUrl(url),
       spawnImpl: this.spawnImpl,
       detectImpl: this.detectImpl,
-      bin: this.cloudflaredBin,
+      bin: this.tunnelBin,
       log: this.log,
     });
 
@@ -125,8 +141,17 @@ export class TunnelRouter {
       const url = await this.tunnel.waitForFirstUrl(this.firstUrlTimeoutMs);
       this.log(`[tunnel] ✓ public ingress ready: ${url}`);
     } catch (err) {
+      if (err instanceof TunnelFatalError) {
+        // Non-transient provider failure (e.g. ngrok's reserved domain is already
+        // online, auth rejected, session limit): supervising a doomed retry loop is
+        // pointless. Tear down and re-throw so the launcher aborts boot with the
+        // provider's own message instead of a silent crash-loop.
+        await this.tunnel.stop().catch(() => {});
+        this.tunnel = null;
+        throw err;
+      }
       this.log(
-        `[tunnel] still waiting for cloudflared URL (${
+        `[tunnel] still waiting for tunnel URL (${
           err instanceof Error ? err.message : String(err)
         }); supervision continues`
       );

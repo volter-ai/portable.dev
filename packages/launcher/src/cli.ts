@@ -65,6 +65,11 @@ Flags:
   --dev              Register against the STAGING relay (${DEV_RELAY_BASE_URL})
                      instead of the production default. Ignored if
                      PORTABLE_RELAY_URL is already set (env / .env always wins).
+  --ngrok            Use ngrok as the public tunnel instead of the default
+                     cloudflared. Requires ngrok installed AND authenticated
+                     (\`ngrok config add-authtoken <token>\` or NGROK_AUTHTOKEN);
+                     if either is missing the launcher fails fast (no fallback).
+                     Same as PORTABLE_TUNNEL_PROVIDER=ngrok.
 
 Credentials (auto-discovered, else login):
   On start the launcher LOOKS for credentials already on your OS and uses them:
@@ -80,7 +85,8 @@ Credentials (auto-discovered, else login):
 
 Prerequisites:
   - Bun (https://bun.sh)
-  - cloudflared (https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
+  - cloudflared (auto-downloaded on first run; no account needed) — the default tunnel.
+    With --ngrok instead: ngrok installed + authenticated (https://ngrok.com/download).
   - For AI: a Claude subscription (the \`claude\` CLI) OR ANTHROPIC_API_KEY.
 
 No Clerk sign-in is needed on the PC: the launcher mints the pairing JWT locally
@@ -172,6 +178,7 @@ async function main(): Promise<void> {
   const wantsVersion = args.includes('--version') || args.includes('-v') || command === 'version';
   const debug = args.includes('--debug') || args.includes('-d');
   const wantsDev = args.includes('--dev');
+  const wantsNgrok = args.includes('--ngrok');
 
   if (wantsHelp) {
     process.stdout.write(HELP);
@@ -224,7 +231,11 @@ async function main(): Promise<void> {
 
   let launcher;
   try {
-    launcher = await createLauncher({ apiLog: openApiLogSink({ debug }), debug });
+    launcher = await createLauncher({
+      apiLog: openApiLogSink({ debug }),
+      debug,
+      ngrok: wantsNgrok,
+    });
   } catch (err) {
     // createLauncher can hard-fail before anything starts — e.g. Chromium could
     // not be provisioned for the REQUIRED Playwright MCP (CHROMIUM_INSTALL_HINT).
@@ -236,9 +247,12 @@ async function main(): Promise<void> {
   try {
     await launcher.runUntilSignal();
   } catch (err) {
-    console.error(`[launcher] fatal: ${err instanceof Error ? err.message : String(err)}`);
-    // Best-effort teardown so a half-started api child isn't orphaned.
+    // Tear down FIRST: without --debug the live Ink UI owns the terminal, so printing
+    // the fatal before unmounting lets Ink's region-redraw on stop() clear it — the
+    // boot looks silent (the failure only reached the log file). shutdown() stops the
+    // UI, so printing AFTER it lands the reason on a clean terminal as the last line.
     await launcher.shutdown().catch(() => {});
+    console.error(`\n[launcher] fatal: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
   }
 }

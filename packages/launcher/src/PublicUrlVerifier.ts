@@ -58,7 +58,13 @@ export const DEFAULT_VERIFY_REQUEST_TIMEOUT_MS = 10_000;
 
 const IPV4_RE = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 
-const realSleep: SleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const realSleep: SleepImpl = (ms) =>
+  new Promise((resolve) => {
+    // unref so a poll loop still mid-wait at shutdown never keeps the process alive
+    // (e.g. boot aborts / the launcher stops while a verify is between DNS attempts).
+    const t = setTimeout(resolve, ms);
+    if (typeof t.unref === 'function') t.unref();
+  });
 
 /**
  * The default DNS resolver: query the host's OWN configured resolvers via `resolve4`.

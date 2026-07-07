@@ -17,8 +17,9 @@ first boot). The launcher mints the data-path JWT with `@vgit2/shared/jwt`
 SAME secret — forwarded to the api child via `buildApiChildEnv` (`JWT_SECRET` +
 `PORTABLE_PC_ID` + `PORTABLE_RELAY_URL`). The gateway never holds the secret or sees
 the JWT; it only relays. Tunnel registration is **`pcId`-keyed: no Authorization
-header, no shared secret** — hardened gateway-side by a `*.trycloudflare.com` URL
-allowlist + a register rate-limit. Clerk lives ONLY in the mobile app, not the launcher.
+header, no shared secret** — hardened gateway-side by a tunnel-host allowlist
+(cloudflared + ngrok, extendable via `TUNNEL_HOST_ALLOWLIST`) + a register rate-limit.
+Clerk lives ONLY in the mobile app, not the launcher.
 
 ## Architecture (DI everywhere)
 
@@ -165,13 +166,37 @@ overrides)` (pins `API_BIND_HOST=127.0.0.1` + `VGIT_PORT`, drops `DEV_BACKEND_PO
   the bare `'cloudflared'` (PATH lookup). `parseTrycloudflareUrl(line)` is the standalone,
   unit-tested URL extractor.
 
-- **`TunnelRouter`** — cloudflared + registration-agent ownership seam. `start()` creates
+- **`Tunnel` (interface, `Tunnel.ts`)** — the provider-agnostic supervisor surface
+  (`start`/`stop`/`cycle`/`getPublicUrl`/`isRunning`/`waitForFirstUrl`, `onUrl` in the
+  shared `TunnelOptions`). Both `CloudflaredTunnel` and `NgrokTunnel` implement it, so
+  the `TunnelRouter` + registration agent are written once. Only the code that PRODUCES
+  the URL differs per provider.
+
+- **`NgrokTunnel` + `NgrokProvisioner`** — the opt-in `portable --ngrok` alternative to
+  cloudflared. **`NgrokTunnel`** spawns + supervises `ngrok http <localUrl> --log stdout
+--log-format json`, parses the public `https://…ngrok…` URL out of ngrok's structured
+  log (`parseNgrokUrl` — JSON `url` field, incl. reserved custom domains; permissive
+  regex fallback), and restarts/`cycle()`s exactly like cloudflared. **`NgrokProvisioner`
+  (`ensureNgrok`)** is a HARD preflight, NOT an auto-download: it resolves the binary
+  (`PORTABLE_NGROK_BIN` → PATH / win32 probe via `resolveNgrokBin`) and requires the agent
+  be authenticated (`NGROK_AUTHTOKEN` or an `authtoken` in the ngrok config — see
+  `isNgrokAuthenticated`), and **throws** `NGROK_SETUP_HINT` / `NGROK_AUTH_HINT` if either
+  is missing. ⚠️ **No fallback to cloudflared** — the user explicitly asked for ngrok, so a
+  broken ngrok setup fails boot (surfaced by `cli.ts`'s createLauncher `catch`). Provider
+  selection lives in `createLauncher` via `resolveUseNgrok(env, options.ngrok)` (the
+  `--ngrok` flag OR `PORTABLE_TUNNEL_PROVIDER=ngrok`): it picks `ensureNgrok`+`NgrokTunnel`
+  vs `ensureCloudflared`+`CloudflaredTunnel` and passes the resolved `tunnelBin` +
+  `makeTunnel` factory to the `TunnelRouter`.
+
+- **`TunnelRouter`** — tunnel + registration-agent ownership seam. `start()` creates
   - starts a `CloudflaredTunnel` fronting the loopback api and routes **every** captured
     URL (first + each rotation/restart) to the `onTunnelUrl` registration-agent seam. A
-    missing-cloudflared error propagates out so the launcher surfaces the install hint; a
-    slow first URL is logged, not fatal. `stop()` tears down cloudflared then calls the
-    `onStop` seam (the agent's heartbeat teardown). Inject `makeCloudflaredTunnel` to fake
-    cloudflared in tests. **`waitForFirstRegistration(timeoutMs?)`** — resolves once the
+    missing-binary error propagates out so the launcher surfaces the install hint; a
+    slow first URL is logged, not fatal. `stop()` tears down the tunnel then calls the
+    `onStop` seam (the agent's heartbeat teardown). Provider-agnostic: it takes a
+    `makeTunnel` factory + a `tunnelBin` (cloudflared by default, ngrok when `--ngrok`);
+    `makeCloudflaredTunnel`/`cloudflaredBin` survive as deprecated back-compat aliases.
+    Inject `makeTunnel` to fake the tunnel in tests. **`waitForFirstRegistration(timeoutMs?)`** — resolves once the
     FIRST `onTunnelUrl` handoff settles (the registration agent's verify + register, or
     immediately if no `onTunnelUrl` is wired); `Launcher.boot()` awaits it before showing
     the QR/loopback page (the premature-QR fix). Bounded + fail-open (default
@@ -289,6 +314,20 @@ label, ttlMs}` to the hosted relay. **`verifyUrl` gate (cached-wrong fix):** whe
   (the live app clears+redraws its region every render and would clobber streamed logs);
   (3) the api child is given `PORTABLE_DEBUG=1` so it emits its extra per-connection
   diagnostics (one gated line in `SocketIOService`, OFF by default).
+
+- **`--ngrok` (`portable --ngrok`, or `PORTABLE_TUNNEL_PROVIDER=ngrok`):** use ngrok
+  instead of the default cloudflared as the public tunnel. Unlike cloudflared (auto-
+  downloaded, anonymous quick tunnels), ngrok is an **opt-in the user must pre-install +
+  authenticate** (`ngrok config add-authtoken` / `NGROK_AUTHTOKEN`). `ensureNgrok`
+  **hard-fails** boot if either is missing — there is **NO fallback to cloudflared**. On
+  Windows an MSIX ngrok (winget / Microsoft Store) has its config VIRTUALIZED: `ngrok
+config check` reports `%LOCALAPPDATA%\ngrok\ngrok.yml`, but external processes only see
+  it at `%LOCALAPPDATA%\Packages\ngrok.ngrok_<hash>\LocalCache\Local\ngrok\ngrok.yml` —
+  `ngrokConfigCandidates` probes both. For
+  it to work over the HOSTED relay the gateway must allowlist ngrok hosts (it does — see
+  `gateway/CLAUDE.md`); the launcher alone works against a self-host `PORTABLE_RELAY_URL`.
+  ngrok URLs resolve instantly, so the cloudflared 30-min NXDOMAIN negative-cache concern
+  (`PublicUrlVerifier`) does not apply — the verify gate stays wired + fail-open anyway.
 
 - **⚠️ The pairing page is loopback-ONLY.** `PairingServer` binds 127.0.0.1 on the
   launcher's OWN port — NEVER the tunneled api port. A pairing/QR endpoint on the api

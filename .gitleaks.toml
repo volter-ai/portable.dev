@@ -17,6 +17,9 @@ regexes = [
   # Test fixtures / placeholders (not real credentials)
   '''sk_test_placeholder''',
   '''secret_db_pass_\d+''',
+  # Fake ngrok authtoken in packages/launcher/tests/NgrokProvisioner.test.ts — a
+  # synthetic value that exercises the Windows MSIX config-detection path, not a secret.
+  '''2abcDEF_secret''',
   # Clerk PUBLISHABLE keys are public by design (they ship in every client bundle)
   '''pk_(live|test)_[A-Za-z0-9_\-]+''',
   # Supabase local-dev DEMO JWTs (iss: "supabase-demo" → identical for every

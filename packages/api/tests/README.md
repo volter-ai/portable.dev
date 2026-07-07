@@ -144,6 +144,26 @@ Creates Express app **without .listen()** for route testing with supertest. Enab
 - Independent test database per user
 - No shared state between tests
 
+### Filesystem safety — WORKSPACE_DIR / DATA_DIR guard (issue #1563)
+
+Tests treat `WORKSPACE_DIR` / `DATA_DIR` as a disposable sandbox and `fs.rm(...,
+{ recursive: true, force: true })` them. After the rev9 D27 collapse,
+`getUserWorkspaceDir()` returns `WORKSPACE_DIR` itself, so those deletes hit the
+workspace ROOT — and a developer's `.env` may point `WORKSPACE_DIR` at the parent
+folder that CONTAINS this repo. To make it impossible for the suite to delete real
+files, the preload (`setup/isolateTestDirs.ts`, imported first) **force-sets**
+`WORKSPACE_DIR` + `PORTABLE_DATA_DIR`/`DATA_DIR` to per-process temp dirs and
+**hard-aborts** the run (`assertSafeTestDir`) if either resolves inside the repo, a
+git working tree, or any non-temp real path.
+
+- **Never** `fs.rm` a path derived from `getUserWorkspaceDir()` / `WORKSPACE_DIR` /
+  `resolveDataDir()` at the ROOT level — scope deletes to a subdir you created, or
+  use a self-owned `fs.mkdtemp(os.tmpdir(), ...)` dir.
+- Any run must load the preload. `bun test` from the repo root and `bun --cwd
+packages/api test` are both covered (root `bunfig.toml` + `packages/api/bunfig.toml`);
+  Bun does not walk up for `bunfig.toml`, so a new package that runs `bun test` from
+  its own dir needs its own preloaded `bunfig.toml`.
+
 ### Async Persistence
 
 Wait for async operations to complete before assertions:

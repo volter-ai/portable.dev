@@ -80,6 +80,10 @@ the api child reads, so the api picks them up with no extra wiring.
   downloaded once via the `cloudflared` npm package, cross-platform). You do NOT
   need to install it via winget/brew/apt. If you already have one, it's reused;
   override the binary with `PORTABLE_CLOUDFLARED_BIN`.
+- **ngrok (only with `--ngrok`)** — the opt-in alternative tunnel. Unlike cloudflared,
+  ngrok is NOT auto-provisioned: you must have it installed AND authenticated
+  (`ngrok config add-authtoken <token>` or `NGROK_AUTHTOKEN`). If either is missing,
+  `portable --ngrok` fails fast (no fallback to cloudflared).
 - **Chromium** — **auto-installed** (a Playwright Chromium for the REQUIRED browser
   MCP). On bare Debian/Ubuntu you may need a one-time
   `sudo playwright install-deps chromium` for system libraries (the launcher prints
@@ -99,6 +103,9 @@ install dirs (`%ProgramFiles(x86)%\cloudflared`, the winget Links dir, scoop shi
 | `PORTABLE_PC_ID`           | Override the stable pcId (else persisted in the local store).                                  |
 | `PORTABLE_PC_LABEL`        | Human label for this PC (default: hostname).                                                   |
 | `PORTABLE_CLOUDFLARED_BIN` | Full path to a `cloudflared` binary to use instead of the auto-provisioned one.                |
+| `PORTABLE_TUNNEL_PROVIDER` | `ngrok` to use ngrok instead of cloudflared (same as the `--ngrok` flag). Default cloudflared. |
+| `PORTABLE_NGROK_BIN`       | Full path to an `ngrok` binary (else resolved on PATH / win32 probe). `--ngrok` only.          |
+| `NGROK_AUTHTOKEN`          | ngrok authtoken; satisfies the `--ngrok` auth preflight (else a configured ngrok authtoken).   |
 | `WORKSPACE_DIR`            | The dir whose git repos Portable operates on (forwarded to the api child).                     |
 
 ## Modules

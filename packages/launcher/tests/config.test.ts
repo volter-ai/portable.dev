@@ -3,7 +3,12 @@ import path from 'path';
 
 import { describe, expect, it } from 'bun:test';
 
-import { loadOperatorEnv, resolveCliVersion } from '../src/config.js';
+import {
+  loadOperatorEnv,
+  resolveCliVersion,
+  resolveTunnelProvider,
+  resolveUseNgrok,
+} from '../src/config.js';
 
 describe('loadOperatorEnv — the operator .env → process.env loader (fix: applePC was ignored)', () => {
   it('loads every var from the .env into the env object (not just WORKSPACE_DIR)', () => {
@@ -85,5 +90,35 @@ describe('resolveCliVersion — the `portable --version` resolver', () => {
       fs.readFileSync(path.resolve(import.meta.dir, '../../../package.json'), 'utf8')
     ) as { version: string };
     expect(resolveCliVersion()).toBe(rootPkg.version);
+  });
+});
+
+describe('resolveTunnelProvider — cloudflared (default) vs ngrok', () => {
+  it("defaults to 'cloudflare' when PORTABLE_TUNNEL_PROVIDER is unset", () => {
+    expect(resolveTunnelProvider({})).toBe('cloudflare');
+  });
+
+  it("is 'ngrok' when PORTABLE_TUNNEL_PROVIDER=ngrok (case-insensitive)", () => {
+    expect(resolveTunnelProvider({ PORTABLE_TUNNEL_PROVIDER: 'ngrok' })).toBe('ngrok');
+    expect(resolveTunnelProvider({ PORTABLE_TUNNEL_PROVIDER: '  NGROK ' })).toBe('ngrok');
+  });
+
+  it("anything else falls back to 'cloudflare'", () => {
+    expect(resolveTunnelProvider({ PORTABLE_TUNNEL_PROVIDER: 'cloudflare' })).toBe('cloudflare');
+    expect(resolveTunnelProvider({ PORTABLE_TUNNEL_PROVIDER: 'tailscale' })).toBe('cloudflare');
+  });
+});
+
+describe('resolveUseNgrok — the --ngrok flag layered on PORTABLE_TUNNEL_PROVIDER', () => {
+  it('is false by default (no flag, no env)', () => {
+    expect(resolveUseNgrok({}, false)).toBe(false);
+  });
+
+  it('the --ngrok flag forces ngrok even without the env', () => {
+    expect(resolveUseNgrok({}, true)).toBe(true);
+  });
+
+  it('PORTABLE_TUNNEL_PROVIDER=ngrok enables ngrok without the flag', () => {
+    expect(resolveUseNgrok({ PORTABLE_TUNNEL_PROVIDER: 'ngrok' }, false)).toBe(true);
   });
 });

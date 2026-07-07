@@ -4,6 +4,14 @@ Patch notes for the Portable CLI, published to npm as
 [`@volter-ai/portable.dev`](https://www.npmjs.com/package/@volter-ai/portable.dev).
 Versions follow the monorepo release version.
 
+## [3.5.1] - 2026-07-07
+
+### Added
+
+- `portable --ngrok` (or `PORTABLE_TUNNEL_PROVIDER=ngrok`) fronts your PC with an ngrok
+  tunnel instead of Cloudflare. ngrok must already be installed and authenticated.
+  Available on Windows, macOS, and Linux.
+
 ## [3.5.0] - 2026-07-04
 
 ### Added

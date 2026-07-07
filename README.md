@@ -192,6 +192,10 @@ The launcher provisions almost everything itself. You only bring three things.
 - **GitHub access** — auto-discovered from the GitHub CLI (`gh`) or your git credential
   helper if present, **or** connect it later from the app. Only the in-terminal login
   fallback needs a `GITHUB_OAUTH_CLIENT_ID` (see [Credentials](#credentials-claude--github)).
+- **ngrok** — only if you pass [`--ngrok`](#cli-commands) to publish the tunnel through ngrok
+  instead of cloudflared. Unlike cloudflared it is **not** auto-provisioned: you must have ngrok
+  installed **and** authenticated (`ngrok config add-authtoken <token>` or `NGROK_AUTHTOKEN`)
+  first. Without `--ngrok` you never need it.
 - **No Docker, no Supabase/Postgres** — the local runtime stores everything in local SQLite
   automatically.
 
@@ -275,7 +279,8 @@ retrying a 404 as if it were the network), and verify the installed shim actuall
 5. **Brings up cloudflared** — publishes a rotating `*.trycloudflare.com` URL and registers it
    with the relay (`POST /tunnel/register`, `pcId`-keyed — no login, no shared secret),
    heartbeating to hold the TTL and re-registering automatically on each rotation. The stable
-   address the app uses is `<relay>/t/<pcId>`.
+   address the app uses is `<relay>/t/<pcId>`. (Pass [`--ngrok`](#cli-commands) to publish an
+   ngrok tunnel instead.)
 6. **Renders the pairing QR** in the terminal (and serves a loopback fallback page printed as
    `http://localhost:<port>/`).
 7. Runs until **Ctrl-C**, then shuts down gracefully (UI → pairing server → tunnel → api).
@@ -303,6 +308,15 @@ source checkout it's `bun run portable -- <command>` (or `bun --cwd packages/lau
 - **Single instance (takeover).** Running `portable` while one is already up **stops the first
   and boots fresh** — its launcher, api child, and cloudflared are all stopped, then a new
   runtime takes the port. **A second window is just a full restart, regardless of directory.**
+
+**Flags:**
+
+- **`--debug` / `-d`** — stream the api logs and print the QR once; see [below](#the---debug-flag).
+- **`--ngrok`** — publish the public tunnel through **ngrok** instead of cloudflared (equivalent
+  to `PORTABLE_TUNNEL_PROVIDER=ngrok`). ngrok must already be installed **and** authenticated
+  (`ngrok config add-authtoken <token>` or `NGROK_AUTHTOKEN`); if either is missing the launcher
+  **fails fast** rather than silently falling back to cloudflared. Useful when a corporate
+  network blocks `*.trycloudflare.com` but allows ngrok.
 
 Full CLI reference (flags, env knobs, modules): [`packages/launcher/README.md`](packages/launcher/README.md).
 
@@ -360,6 +374,9 @@ situation applies. Put overrides in a `.env` at the repo root.
 | `JWT_SECRET`                          | _auto-generated + persisted_ | You want to pin a specific signing secret (e.g. reuse across reinstalls).                                       |
 | `PORTABLE_E2E_PSK`                    | _auto-generated + persisted_ | You want to pin the end-to-end encryption pre-shared key (base64, 32 bytes; carried only in the pairing QR).    |
 | `PORTABLE_RELAY_URL`                  | `https://app.portable.dev`   | You [self-host the relay](#self-hosting-the-relay) (or want a different hosted relay).                          |
+| `PORTABLE_TUNNEL_PROVIDER`            | `cloudflared`                | Set to `ngrok` to publish the tunnel with ngrok instead (same as `--ngrok`; ngrok must be installed + authed).  |
+| `PORTABLE_NGROK_BIN`                  | _PATH / win32 probe_         | `--ngrok` can't find `ngrok` on your PATH and you want to point at a specific binary.                           |
+| `NGROK_AUTHTOKEN`                     | _(configured ngrok token)_   | You want to pass the ngrok authtoken via env instead of `ngrok config add-authtoken <token>`.                   |
 | `PORTABLE_PC_ID`                      | `pc_<uuid>` (persisted)      | You want a stable, human-chosen PC id (routing key, not a secret).                                              |
 | `PORTABLE_PC_LABEL`                   | _hostname_                   | You want a friendly display name for the PC.                                                                    |
 | `VGIT_PORT`                           | `4200`                       | The default port is taken. **⚠️ Never use `7878`** — it is reserved by the dev tooling.                         |
@@ -451,6 +468,11 @@ pcId-keyed tunnel registration and reverse-proxy app traffic to the PC's cloudfl
 - **cloudflared couldn't be provisioned.** The launcher downloads cloudflared for you; if that
   fails (offline) it falls back to one on your PATH. Install cloudflared manually and re-run —
   nothing else has spawned yet, so there's nothing to clean up.
+- **`--ngrok` won't start.** ngrok is opt-in and **not** auto-provisioned, so the launcher fails
+  fast (no silent fallback to cloudflared) and names the missing precondition. Install ngrok and
+  run `ngrok config add-authtoken <token>` (or set `NGROK_AUTHTOKEN`) first. On Windows a
+  Microsoft Store (MSIX) ngrok stores its config in a virtualized path — the launcher detects it,
+  but if auth still isn't found, set `NGROK_AUTHTOKEN` explicitly.
 - **"AI unavailable" / no Claude credential.** Run `claude setup-token` to sign in with your
   Claude subscription. Boot still succeeds — you just can't run the AI until a credential is present.
 - **Phone can't reach the PC.** Run with `--debug` and watch for the handshake line when you

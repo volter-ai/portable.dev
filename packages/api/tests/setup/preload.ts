@@ -26,12 +26,19 @@
  */
 
 // =============================================================================
+// Filesystem isolation guard - MUST run BEFORE anything else (issue #1563)
+// =============================================================================
+// Pin WORKSPACE_DIR/DATA_DIR to throwaway temp dirs and hard-abort if they don't
+// land somewhere safe. Imported FIRST (side effect) so the env is force-set and
+// validated before any test module — or a mock's import — can load constants or
+// delete a directory. Without this a run that skips the preload force-set could
+// let a test rm -rf the developer's real workspace.
+import './isolateTestDirs';
+
+// =============================================================================
 // SDK Mock Setup - MUST be done BEFORE any test code imports ClaudeService
 // =============================================================================
 // Import mock.module from bun:test - this is safe in preload as of Bun 1.0+
-import os from 'os';
-import path from 'path';
-
 import { mock } from 'bun:test';
 
 // Import the shared mock implementation (has no SDK imports, safe to load early)
@@ -111,20 +118,16 @@ const CI_ENV_VARS: Record<string, string> = {
   // McpService validates this before allowing chat creation; without it, agent-setup tests fail locally.
   PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: '/test/chromium',
 
-  // rev9 D27: the per-user workspace layer is COLLAPSED (getUserWorkspaceDir now
-  // returns WORKSPACE_DIR directly). Tests that clone into / rm getUserWorkspaceDir
-  // would otherwise hit the operator's REAL ~/claude-workspace repos root. Pin
-  // WORKSPACE_DIR to a unique tmp dir for the whole test process — set BEFORE
-  // constants.ts loads so the frozen WORKSPACE_DIR const picks it up. This restores
-  // the test isolation the per-user subdir used to provide.
-  WORKSPACE_DIR: path.join(os.tmpdir(), `portable-test-workspace-${process.pid}`),
+  // NOTE: WORKSPACE_DIR + DATA_DIR are force-set and guarded in ./isolateTestDirs
+  // (imported first, above) — rev9 D27 collapsed the per-user workspace layer, so
+  // getUserWorkspaceDir() now returns WORKSPACE_DIR itself and tests rm the ROOT.
+  // See issue #1563.
 };
 
 // Env vars that MUST be force-set (override .env values)
 const FORCE_SET_VARS = [
   'GITHUB_APP_SERVICE_URL',
   'JWT_SECRET', // local JWT signing secret for tests (verifyAuthToken)
-  'WORKSPACE_DIR', // rev9 D27: override the operator's .env so tests never touch the real workspace
 ];
 
 // Apply CI environment variables

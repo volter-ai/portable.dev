@@ -63,6 +63,33 @@ export function resolveReviewerPublish(env: NodeJS.ProcessEnv = process.env): bo
   return raw === 'true' || raw === '1';
 }
 
+/**
+ * Which tunnel provider fronts the PC's public ingress. `cloudflare` (default,
+ * auto-provisioned, no account) or `ngrok` (opt-in via `portable --ngrok` or
+ * `PORTABLE_TUNNEL_PROVIDER=ngrok`; requires ngrok installed + authenticated).
+ */
+export type TunnelProvider = 'cloudflare' | 'ngrok';
+
+/**
+ * Resolve the configured tunnel provider from `PORTABLE_TUNNEL_PROVIDER` at CALL
+ * TIME. Anything other than a case-insensitive `ngrok` (incl. unset) → `cloudflare`.
+ * The `--ngrok` CLI flag is layered on top by {@link resolveUseNgrok}.
+ */
+export function resolveTunnelProvider(env: NodeJS.ProcessEnv = process.env): TunnelProvider {
+  return env.PORTABLE_TUNNEL_PROVIDER?.trim().toLowerCase() === 'ngrok' ? 'ngrok' : 'cloudflare';
+}
+
+/**
+ * Whether to use the ngrok tunnel provider: the `--ngrok` CLI flag OR
+ * `PORTABLE_TUNNEL_PROVIDER=ngrok`. The flag wins when set; otherwise the env decides.
+ */
+export function resolveUseNgrok(
+  env: NodeJS.ProcessEnv = process.env,
+  flagPresent = false
+): boolean {
+  return flagPresent || resolveTunnelProvider(env) === 'ngrok';
+}
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /**
