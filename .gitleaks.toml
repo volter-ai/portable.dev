@@ -20,6 +20,10 @@ regexes = [
   # Fake ngrok authtoken in packages/launcher/tests/NgrokProvisioner.test.ts — a
   # synthetic value that exercises the Windows MSIX config-detection path, not a secret.
   '''2abcDEF_secret''',
+  # Claude Code's PUBLIC OAuth client id (packages/api/src/services/ClaudeOAuthService.ts).
+  # A PKCE public-client identifier (no secret) — it ships in Claude Code's own binary and
+  # drives the same /login flow; gitleaks flags the UUID as a generic-api-key false positive.
+  '''9d1c250a-e61b-44d9-88ed-5944d1962f5e''',
   # Clerk PUBLISHABLE keys are public by design (they ship in every client bundle)
   '''pk_(live|test)_[A-Za-z0-9_\-]+''',
   # Supabase local-dev DEMO JWTs (iss: "supabase-demo" → identical for every

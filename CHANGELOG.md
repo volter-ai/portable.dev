@@ -4,6 +4,21 @@ Patch notes for the Portable CLI, published to npm as
 [`@volter-ai/portable.dev`](https://www.npmjs.com/package/@volter-ai/portable.dev).
 Versions follow the monorepo release version.
 
+## [3.5.2] - 2026-07-08
+
+### Added
+
+- Sign in with your Claude account right from the app — open Settings → Claude Account,
+  or type `/login` in the composer, to connect (or reconnect) your Anthropic account
+  without touching your PC. Portable keeps the session alive by refreshing the token for
+  you.
+
+### Fixed
+
+- Credential problems no longer leak raw internal text into the chat. You now get a clear
+  message with a sign-in button instead — covering both a missing credential and an
+  expired or revoked one.
+
 ## [3.5.1] - 2026-07-07
 
 ### Added

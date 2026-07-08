@@ -566,26 +566,24 @@ export class ChatService {
   }
 
   /**
-   * Update the last read message ID for a chat
-   * Used to track unread messages
+   * Update the last read message ID for a chat.
+   * Used to track unread messages — best-effort, so it never throws.
+   *
+   * Returns `false` (without persisting) when the chat has no persistent row,
+   * e.g. a discovered/terminal chat sourced only from the shared
+   * `~/.claude/projects` transcripts — those have nowhere to store a read
+   * cursor and are not an error. A genuine IO failure still throws from the
+   * adapter's write and propagates to the caller.
+   *
    * @param authToken - Optional JWT auth token (unused by the local SQLite adapter)
-   * @throws Error if the update fails
    */
   async updateLastReadMessageId(
     chatId: string,
     userId: string,
     messageId: number,
     authToken?: string
-  ): Promise<void> {
-    const success = await this.dbAdapter.updateLastReadMessageId(
-      chatId,
-      userId,
-      messageId,
-      authToken
-    );
-    if (!success) {
-      throw new Error(`Failed to update last read message ID for chat ${chatId}`);
-    }
+  ): Promise<boolean> {
+    return this.dbAdapter.updateLastReadMessageId(chatId, userId, messageId, authToken);
   }
 
   /**

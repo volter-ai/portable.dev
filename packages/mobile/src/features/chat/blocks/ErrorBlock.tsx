@@ -8,15 +8,20 @@
  * dumps raw JSON.
  *
  * testIDs: `block-error`, `block-error-toggle` / `block-error-details` (when
- * `details` present).
+ * `details` present), `block-error-signin` (dead-credential CTA,
+ * portable.dev#18: `code === 'ai_credential_invalid'` → a "Sign in with
+ * Claude" button that opens Settings → Claude Account).
  */
 
+import { AI_CREDENTIAL_INVALID_CODE } from '@vgit2/shared/types';
+import { router } from 'expo-router';
 import { memo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { ClaudeStreamBlock } from '@vgit2/shared/socket';
 
 import { useAppTheme, withAlpha } from '../../../theme';
+import { CLAUDE_ACCOUNT_ROUTE } from '../composer/clientSlashCommands';
 
 export interface ErrorBlockProps {
   block: ClaudeStreamBlock;
@@ -73,6 +78,18 @@ export const ErrorBlock = memo(function ErrorBlock({ block }: ErrorBlockProps) {
       {action ? (
         <Text style={[styles.action, { color: theme.colors.primary }]}>💡 {action}</Text>
       ) : null}
+      {code === AI_CREDENTIAL_INVALID_CODE ? (
+        <Pressable
+          testID="block-error-signin"
+          accessibilityRole="button"
+          onPress={() => router.push(CLAUDE_ACCOUNT_ROUTE)}
+          style={[styles.signInButton, { backgroundColor: theme.colors.primary }]}
+        >
+          <Text style={[styles.signInLabel, { color: theme.colors.textInverse }]}>
+            Sign in with Claude
+          </Text>
+        </Pressable>
+      ) : null}
       {expanded && details ? (
         <View
           testID="block-error-details"
@@ -114,6 +131,15 @@ const styles = StyleSheet.create({
   },
   chevron: { paddingTop: 2 },
   action: { paddingLeft: 24, paddingTop: 4, fontSize: 12, lineHeight: 18 },
+  signInButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 6,
+    marginLeft: 24,
+    marginTop: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  signInLabel: { fontSize: 13, fontWeight: '600' },
   detailsBox: {
     marginTop: 6,
     marginLeft: 24,

@@ -703,7 +703,14 @@ every page MVVM ViewModel-as-hook over the shared `chrome/SettingsChrome.tsx` ki
   Danger-Zone delete confirm. **Profile photo is Clerk-native** (`user.setProfileImage`, not a
   gateway endpoint). **Account deletion** is gated on re-typing the email → `DELETE /auth/account`
   → sign-out → `/sign-in`.
-- **Sections:** `commits` (the AI co-author toggle — server pref in
+- **Sections:** `claude-account` (portable.dev#18 — sign in with Claude from the phone: the
+  AI-credential status card over `GET /api/ai-credentials/status` + the browser-and-paste-code
+  PKCE login (`POST /login/start` → `Linking.openURL` → paste `CODE#STATE` → `POST
+/login/complete`), a paste-token fallback (`POST /token`) and sign-out (`DELETE`); the browser
+  opener is an injectable VM seam. Also reachable by typing `/login` in either composer — a
+  CLIENT command (`composer/clientSlashCommands.ts`, merged into the slash picker) that navigates
+  instead of sending — and from the chat dead-credential `ErrorBlock` CTA
+  (`code === 'ai_credential_invalid'`)), `commits` (the AI co-author toggle — server pref in
   `userSettings.includeCoAuthoredBy`; the backend half installs a `prepare-commit-msg` hook +
   passes SDK `settings.includeCoAuthoredBy`), `ai-style` (store-only, `@vgit2/shared/aiStyles`),
   `permissions` (DEVICE permissions — notifications/mic/camera), `mcp` + `agent-setups` (read-only

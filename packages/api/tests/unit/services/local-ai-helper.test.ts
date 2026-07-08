@@ -41,6 +41,7 @@ import { LocalAiHelper } from '../../../src/services/ai/LocalAiHelper';
 
 function helperFor(credential: any): LocalAiHelper {
   const credentials = {
+    ensureFresh: async () => {},
     resolveCredential: () => {
       if (!credential) {
         throw new Error(

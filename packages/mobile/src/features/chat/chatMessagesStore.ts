@@ -424,12 +424,23 @@ export const useChatMessagesStore = create<ChatMessagesState>()((set, get) => ({
   markError: (chatId, error, errorBlock) =>
     set((state) => {
       const statuses = { ...state.statuses, [chatId]: 'error' as ChatStatus };
-      const errors = { ...state.errors, [chatId]: error };
       const runStartedAt = withoutRunStart(state.runStartedAt, chatId);
-      if (!errorBlock) return { statuses, errors, runStartedAt };
-      const current = state.messages[chatId] ?? [];
-      const next = appendBlockToMessages(current, errorBlock);
-      return { statuses, errors, runStartedAt, messages: { ...state.messages, [chatId]: next } };
+      // A structured error block is the canonical, user-facing error surface (clean
+      // title/message + optional CTA + a collapsible raw-details section). When one
+      // is present we must NOT also stash the raw `error` string: the MessageList
+      // footer renders `errors[chatId]` verbatim, which would leak internal text like
+      // "[LocalAiCredentialsService] FATAL: No local Anthropic credential configured…"
+      // right below the clean block (portable.dev#18). Clear it so only the block shows.
+      if (errorBlock) {
+        const errors = { ...state.errors };
+        delete errors[chatId];
+        const current = state.messages[chatId] ?? [];
+        const next = appendBlockToMessages(current, errorBlock);
+        return { statuses, errors, runStartedAt, messages: { ...state.messages, [chatId]: next } };
+      }
+      // No structured block — the raw footer is the only error signal (catch-all).
+      const errors = { ...state.errors, [chatId]: error };
+      return { statuses, errors, runStartedAt };
     }),
 
   markToolPermissionRequired: (chatId, { requestId, toolName }) =>

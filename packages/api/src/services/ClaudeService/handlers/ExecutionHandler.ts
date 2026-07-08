@@ -653,6 +653,10 @@ export class ExecutionHandler {
 
       // Local-first: resolve the user's OWN Anthropic credential and call DIRECT.
       if (this.localAiCredentialsService) {
+        // Auto-refresh first (portable.dev#18): renew a near-expiry OAuth access
+        // token with the stored refresh token so every session start self-heals.
+        // Never throws — a failed refresh falls through to the stored token.
+        await this.localAiCredentialsService.ensureFresh();
         // Local-first direct mode: resolve the user's OWN credential
         // from the local encrypted store / local config — Claude subscription OAuth
         // (→ CLAUDE_CODE_OAUTH_TOKEN) or a raw ANTHROPIC_API_KEY. Never a JWT claim.

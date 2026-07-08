@@ -30,6 +30,7 @@ import { SlackClient } from '../../../src/services/SlackClient.js';
 import { SocketIOService } from '../../../src/services/SocketIOService.js';
 import { LocalSecretsVaultAdapter } from '../../../src/db/LocalSecretsVaultAdapter.js';
 
+import type { ClaudeOAuthService } from '../../../src/services/ClaudeOAuthService.js';
 import type { DbAdapter } from '../../../src/db/DbAdapter.js';
 import { StorageService } from '../../../src/services/StorageService.js';
 
@@ -68,6 +69,11 @@ export interface TestServerOptions {
    * Optional StorageService instance (with custom basePath for testing)
    */
   storageService?: StorageService;
+
+  /**
+   * Optional ClaudeOAuthService (mounts /api/ai-credentials when provided)
+   */
+  claudeOAuthService?: ClaudeOAuthService;
 
   /**
    * Enable JWT authentication middleware (default: false for simpler testing)
@@ -313,7 +319,9 @@ export function createTestServer(options: TestServerOptions): Application {
       options.services?.socketIOService || (null as any),
       null as any, // pushNotificationService
       null as any, // sopService
-      options.storageService // storageService
+      options.storageService, // storageService
+      undefined, // localAiHelper
+      options.claudeOAuthService // claudeOAuthService (mounts /api/ai-credentials)
     )
   );
 

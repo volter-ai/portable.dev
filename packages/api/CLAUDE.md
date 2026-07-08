@@ -153,12 +153,39 @@ Contrast with `@vgit2/gateway`, the public `app.portable.dev` auth + reverse-pro
   `claude-oauth` — a Claude _subscription_ OAuth token persisted in the `LocalSecretStore`
   (namespaced key `ai-credentials:claude-oauth-token`), handed to the Claude Agent SDK / native CLI
   via `CLAUDE_CODE_OAUTH_TOKEN`; or (b) `api-key` — a raw `ANTHROPIC_API_KEY` from local config.
-  `resolveCredential()` prefers a configured OAuth token over the API key; `applyToProcessEnv()`
+  `resolveCredential()` prefers a configured OAuth credential over an API key; `applyToProcessEnv()`
   wires the chosen credential into `process.env` (mutually exclusive) and **clears
   `ANTHROPIC_BASE_URL`** so calls hit the default `https://api.anthropic.com`. Injected into
   `ClaudeService.setLocalAiCredentialsService` → `ExecutionHandler`.
   `ExecutionHandler.determineApiRoutingMode` **always** returns `'direct'` — there is no billing /
   routing proxy.
+  - **OAuth record + auto-refresh (portable.dev#18).** The full Claude OAuth credential set lives
+    in the JSON record key `ai-credentials:claude-oauth-record`
+    (`{accessToken, refreshToken?, expiresAt?, scopes?, email?, obtainedAt}`); writing it MIRRORS
+    `accessToken` into the legacy plain key (the launcher's discovery/guidance read it).
+    `resolveCredential()` order: record → legacy token → pasted api-key
+    (`ai-credentials:anthropic-api-key`) → env `ANTHROPIC_API_KEY`. `ensureFresh()` (called by
+    `ExecutionHandler` before `applyToProcessEnv` and by `LocalAiHelper.complete`) delegates to the
+    injected `OAuthRefresher` and NEVER throws.
+- **ClaudeOAuthService** (`src/services/ClaudeOAuthService.ts`): the Claude-account OAuth flow
+  (portable.dev#18 — sign in from the phone). Implements the same authorization-code + PKCE flow
+  Claude Code's `/login` uses, driven from the mobile app: `startLogin()` mints the authorize URL
+  (ONE pending attempt, 10-min TTL), the phone browser shows the user a `CODE#STATE` string, and
+  `completeLogin()` exchanges it (form-encoded, generous 120s timeout) + persists the record.
+  `refreshIfNeeded()` renews the ~8h access token inside a 5-min buffer with the stored refresh
+  token — single-flight, never throws (a failed refresh keeps the old record; the run's own auth
+  error + the mobile dead-credential CTA take over). Also `status()` (metadata only — token values
+  NEVER leave the PC), `pasteToken()` (`sk-ant-oat…` → OAuth record; other `sk-ant-…` → stored
+  api-key), `signOut()`. Wired in `server.ts` as `LocalAiCredentialsService.setOAuthRefresher` and
+  exposed via `routes/subroutes/ai-credentials.routes.ts` (`/api/ai-credentials/*`, JWT zone). ⚠️
+  The endpoints/client id are the (undocumented) ones the Claude Code CLI itself uses — confined
+  to this one module; the paste-token fallback survives upstream changes.
+- **aiCredentialErrorClassifier** (`src/services/aiCredentialErrorClassifier.ts`): recognizes
+  auth-flavored run-failure text ("OAuth token has expired", `authentication_error`, invalid
+  api-key, …) and builds the inline `claude:error` `errorBlock` with
+  `code: 'ai_credential_invalid'` (constant single-sourced in `@vgit2/shared/types`) — the mobile
+  ErrorBlock renders a "Sign in with Claude" CTA for it. Wired at the `claude:error` emit sites in
+  `ChatExecutionService`. Deliberately conservative (a bare "401"/"unauthorized" could be GitHub).
 - **LocalAiHelper** (`src/services/ai/LocalAiHelper.ts`): the auxiliary "AI helper" for short
   one-shot calls. Wraps `LocalAiCredentialsService` and runs a **one-shot, NON-streaming**
   `messages.create` (`@anthropic-ai/sdk`, `MODEL_IDS.haiku`) direct to `https://api.anthropic.com`

@@ -172,6 +172,10 @@ below are a current reference — the source files are authoritative.
   `POST /api/repos/:owner/:repo/inject-secrets`.
 - **storage** — `GET /api/storage/list`, `/api/storage/usage`; `DELETE /api/storage`,
   `/api/storage/bulk`.
+- **ai-credentials** (Claude-account sign-in from the phone, portable.dev#18) —
+  `GET /api/ai-credentials/status`; `POST /api/ai-credentials/login/start` · `/login/complete`;
+  `POST /api/ai-credentials/token` (paste fallback); `DELETE /api/ai-credentials` (sign out).
+  Thin delegates over `ClaudeOAuthService`; token values never leave the PC.
 - **misc** — `GET/POST /api/user-settings`; `GET /api/config`, `/api/dev-info`;
   `GET /api/mcps/available`; `GET/POST/PUT/DELETE /api/agent-setups[/:id]`;
   push-notification subscribe/unsubscribe; `GET /api/sentry-test`.
