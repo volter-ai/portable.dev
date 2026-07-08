@@ -541,19 +541,37 @@ describe('message list + streaming render', () => {
     expect(useChatMessagesStore.getState().statuses[CHAT_ID]).toBe('completed');
   });
 
-  it('renders the error state and appends the inline error block', async () => {
+  it('appends the inline error block and SUPPRESSES the raw error footer', async () => {
+    await mountChat();
+    act(() => {
+      controller.emitServerEvent(SERVER_EVENTS.CLAUDE_ERROR, {
+        chatId: CHAT_ID,
+        // Raw internal text the backend also sends — must NOT leak into the chat
+        // when a structured block is present (portable.dev#18).
+        error: '[LocalAiCredentialsService] FATAL: No local Anthropic credential configured.',
+        errorBlock: { type: 'error', blockId: 'err', title: 'Claude sign-in needed' },
+      });
+    });
+    expect(useChatMessagesStore.getState().statuses[CHAT_ID]).toBe('error');
+    // The structured block landed on the message list…
+    expect(blockCount()).toBe(1);
+    // …and the raw footer (which would render `error` verbatim) is NOT shown.
+    expect(screen.queryByTestId('chat-error')).toBeNull();
+    expect(useChatMessagesStore.getState().errors[CHAT_ID]).toBeUndefined();
+  });
+
+  it('shows the raw footer for a generic error with no structured block', async () => {
     await mountChat();
     act(() => {
       controller.emitServerEvent(SERVER_EVENTS.CLAUDE_ERROR, {
         chatId: CHAT_ID,
         error: 'Something broke',
-        errorBlock: { type: 'error', blockId: 'err', title: 'Boom' },
       });
     });
-    expect(screen.queryByTestId('chat-error')).not.toBeNull();
     expect(useChatMessagesStore.getState().statuses[CHAT_ID]).toBe('error');
-    // The inline error block landed on the message list.
-    expect(blockCount()).toBe(1);
+    // No block → the footer is the only error signal (catch-all).
+    expect(screen.queryByTestId('chat-error')).not.toBeNull();
+    expect(blockCount()).toBe(0);
   });
 
   it('auto-marks-as-read via onViewableItemsChanged (highest visible numeric id)', async () => {

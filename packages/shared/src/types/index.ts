@@ -504,6 +504,23 @@ export type {
 } from './deviceToken.js';
 
 // ============================================================================
+// AI-CREDENTIAL MANAGEMENT TYPES (/api/ai-credentials/*, portable.dev#18)
+// ============================================================================
+export type {
+  AiCredentialMode,
+  AiCredentialSource,
+  AiCredentialsStatusResponse,
+  AiCredentialsLoginStartResponse,
+  AiCredentialsLoginCompleteRequest,
+  AiCredentialsLoginCompleteResponse,
+  AiCredentialsPasteTokenRequest,
+  AiCredentialsPasteTokenResponse,
+  AiCredentialsSignOutResponse,
+  AiCredentialsErrorResponse,
+} from './aiCredentials.js';
+export { AI_CREDENTIAL_INVALID_CODE } from './aiCredentials.js';
+
+// ============================================================================
 // MOBILE REACT NATIVE GATEWAY ROUTE TYPES (/auth/mobile/react-native/*)
 // ============================================================================
 export type {

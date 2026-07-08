@@ -19,3 +19,4 @@ export {
   parseSlashQuery,
   type SlashCommandPickerProps,
 } from './SlashCommandPicker';
+export { CLAUDE_ACCOUNT_ROUTE, CLIENT_SLASH_COMMANDS, isLoginCommand } from './clientSlashCommands';

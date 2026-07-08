@@ -20,8 +20,11 @@ import path from 'path';
 import { LocalSecretStore } from '@vgit2/shared/secrets';
 
 import {
+  ANTHROPIC_API_KEY_STORE_KEY,
+  CLAUDE_OAUTH_RECORD_KEY,
   CLAUDE_OAUTH_TOKEN_KEY,
   LocalAiCredentialsService,
+  type ClaudeOAuthRecord,
 } from '../../../src/services/LocalAiCredentialsService';
 
 let tmpDir: string;
@@ -148,5 +151,143 @@ describe('applyToProcessEnv', () => {
     expect(() => service.applyToProcessEnv()).toThrow();
     expect(process.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// portable.dev#18 — OAuth record storage (login-from-phone + auto-refresh)
+// ---------------------------------------------------------------------------
+
+const sampleRecord = (overrides: Partial<ClaudeOAuthRecord> = {}): ClaudeOAuthRecord => ({
+  accessToken: 'sk-ant-oat01-record-token',
+  refreshToken: 'sk-ant-ort01-refresh',
+  expiresAt: Date.now() + 8 * 3600_000,
+  scopes: ['user:inference', 'user:profile'],
+  email: 'user@example.com',
+  obtainedAt: new Date().toISOString(),
+  ...overrides,
+});
+
+describe('OAuth record storage (portable.dev#18)', () => {
+  it('round-trips the record and mirrors accessToken into the legacy key', () => {
+    const record = sampleRecord();
+    service.setOAuthRecord(record);
+
+    expect(service.getOAuthRecord()).toEqual(record);
+    // Mirror: the launcher's CredentialResolver/LocalCredentialGuidance read the
+    // legacy plain key — it must always match the record's access token.
+    expect(service.getClaudeOAuthToken()).toBe(record.accessToken);
+    expect(store.list()).toContain(CLAUDE_OAUTH_RECORD_KEY);
+  });
+
+  it('persists the record encrypted at rest (never plaintext on disk)', () => {
+    service.setOAuthRecord(sampleRecord());
+    const raw = fs.readFileSync(path.join(tmpDir, 'secrets.json'), 'utf8');
+    expect(raw).not.toContain('sk-ant-oat01-record-token');
+    expect(raw).not.toContain('sk-ant-ort01-refresh');
+  });
+
+  it('rejects a record with an empty accessToken', () => {
+    expect(() => service.setOAuthRecord(sampleRecord({ accessToken: '   ' }))).toThrow();
+    expect(service.getOAuthRecord()).toBeNull();
+  });
+
+  it('clearAllOAuth removes the record AND the legacy key', () => {
+    service.setOAuthRecord(sampleRecord());
+    expect(service.clearAllOAuth()).toBe(true);
+    expect(service.getOAuthRecord()).toBeNull();
+    expect(service.getClaudeOAuthToken()).toBeNull();
+    // Idempotent: a second clear reports nothing removed.
+    expect(service.clearAllOAuth()).toBe(false);
+  });
+
+  it('returns null (not a throw) for a corrupt stored record', () => {
+    store.set(CLAUDE_OAUTH_RECORD_KEY, 'not-json');
+    expect(service.getOAuthRecord()).toBeNull();
+  });
+});
+
+describe('stored API key rung (paste fallback)', () => {
+  it('stores, resolves, and clears an API key from the store', () => {
+    service.setStoredApiKey('sk-ant-api03-stored');
+    expect(service.resolveCredential()).toEqual({
+      mode: 'api-key',
+      apiKey: 'sk-ant-api03-stored',
+    });
+    expect(store.list()).toContain(ANTHROPIC_API_KEY_STORE_KEY);
+    expect(service.clearStoredApiKey()).toBe(true);
+    expect(() => service.resolveCredential()).toThrow();
+  });
+
+  it('rejects an empty API key', () => {
+    expect(() => service.setStoredApiKey('  ')).toThrow();
+  });
+});
+
+describe('resolveCredential precedence (record → legacy → stored key → env key)', () => {
+  it('prefers the OAuth record over the legacy token', () => {
+    // A stale legacy value (e.g. seeded by an old launcher) must lose to the record.
+    store.set(CLAUDE_OAUTH_TOKEN_KEY, 'sk-ant-oat01-stale-legacy');
+    service.setOAuthRecord(sampleRecord({ accessToken: 'sk-ant-oat01-fresh' }));
+    expect(service.resolveCredential()).toEqual({
+      mode: 'claude-oauth',
+      oauthToken: 'sk-ant-oat01-fresh',
+    });
+  });
+
+  it('falls back to the legacy token when no record exists', () => {
+    service.setClaudeOAuthToken('sk-ant-oat01-legacy-only');
+    expect(service.resolveCredential()).toEqual({
+      mode: 'claude-oauth',
+      oauthToken: 'sk-ant-oat01-legacy-only',
+    });
+  });
+
+  it('prefers a stored API key over the env API key', () => {
+    service.setStoredApiKey('sk-ant-api03-stored');
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-api03-env';
+    expect(service.resolveCredential()).toEqual({
+      mode: 'api-key',
+      apiKey: 'sk-ant-api03-stored',
+    });
+  });
+
+  it('reports the resolved source for the status surface', () => {
+    expect(service.credentialSource()).toBe('none');
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-api03-env';
+    expect(service.credentialSource()).toBe('env-api-key');
+    service.setStoredApiKey('sk-ant-api03-stored');
+    expect(service.credentialSource()).toBe('stored-api-key');
+    service.setClaudeOAuthToken('sk-ant-oat01-legacy');
+    expect(service.credentialSource()).toBe('legacy-token');
+    service.setOAuthRecord(sampleRecord());
+    expect(service.credentialSource()).toBe('oauth-record');
+  });
+});
+
+describe('ensureFresh (auto-refresh delegation)', () => {
+  it('is a no-op when no refresher is injected', async () => {
+    service.setOAuthRecord(sampleRecord());
+    await service.ensureFresh(); // must not throw
+  });
+
+  it('delegates to the injected refresher', async () => {
+    let calls = 0;
+    service.setOAuthRefresher({
+      refreshIfNeeded: async () => {
+        calls++;
+      },
+    });
+    await service.ensureFresh();
+    expect(calls).toBe(1);
+  });
+
+  it('never throws when the refresher fails (stale token falls through)', async () => {
+    service.setOAuthRefresher({
+      refreshIfNeeded: async () => {
+        throw new Error('refresh endpoint down');
+      },
+    });
+    await service.ensureFresh(); // must not throw
   });
 });

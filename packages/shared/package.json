@@ -1,7 +1,7 @@
 {
   "name": "@vgit2/shared",
   "private": true,
-  "version": "3.5.1",
+  "version": "3.5.2",
   "type": "module",
   "main": "./src/constants.ts",
   "types": "./src/constants.ts",

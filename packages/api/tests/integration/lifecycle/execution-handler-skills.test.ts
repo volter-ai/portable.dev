@@ -75,7 +75,10 @@ describe('ExecutionHandler enables repo + global skills', () => {
       // Inject a stub local AI credential so ExecutionHandler's direct-mode path reaches
       // the (mocked) query() instead of throwing "ANTHROPIC_API_KEY not found" — the
       // const credential check is frozen at module load and can't be set per-test.
-      claudeService.setLocalAiCredentialsService({ applyToProcessEnv: () => 'api-key' } as any);
+      claudeService.setLocalAiCredentialsService({
+        applyToProcessEnv: () => 'api-key',
+        ensureFresh: async () => {},
+      } as any);
 
       executionService = new ChatExecutionService(
         chatService,

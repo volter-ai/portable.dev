@@ -48,6 +48,7 @@ import { LocalAiHelper } from './services/ai/LocalAiHelper.js';
 import { AuthService } from './services/AuthService.js';
 import { ChatExecutionService } from './services/ChatExecutionService.js';
 import { ChatService } from './services/ChatService.js';
+import { ClaudeOAuthService } from './services/ClaudeOAuthService.js';
 import { ClaudeService } from './services/ClaudeService.js';
 import { ConnectionsService } from './services/ConnectionsService.js';
 import { DeviceTokenService } from './services/DeviceTokenService.js';
@@ -165,6 +166,8 @@ class Server {
   // Local-first AI credentials: Claude subscription OAuth / ANTHROPIC_API_KEY,
   // resolved locally.
   private localAiCredentialsService?: LocalAiCredentialsService;
+  // Claude-account OAuth: phone-driven login + access-token auto-refresh.
+  private claudeOAuthService?: ClaudeOAuthService;
   // Local-first one-shot AI helper — direct-to-Anthropic replacement for the
   // auxiliary AI helper calls (intent/suggestions/summary/actions/project-name).
   private localAiHelper?: LocalAiHelper;
@@ -342,6 +345,11 @@ class Server {
     // (namespaced key), never from a JWT claim.
     this.localAiCredentialsService = new LocalAiCredentialsService(localSecretStore);
     debugLog('[Server] LocalAiCredentialsService initialized (local-first AI credentials)');
+    // Claude-account OAuth (portable.dev#18): phone-driven login + the auto-refresh
+    // seam ensureFresh() delegates to at session start / one-shots.
+    this.claudeOAuthService = new ClaudeOAuthService(this.localAiCredentialsService);
+    this.localAiCredentialsService.setOAuthRefresher(this.claudeOAuthService);
+    debugLog('[Server] ClaudeOAuthService initialized (login-from-phone + auto-refresh)');
     // One-shot AI helper for auxiliary AI calls — routes them direct to the
     // user's OWN Anthropic credential (Haiku).
     this.localAiHelper = new LocalAiHelper(this.localAiCredentialsService);
@@ -908,7 +916,8 @@ class Server {
         this.pushNotificationService, // Pass PushNotificationService for push notification endpoints
         this.sopService, // Pass SOPService for SOP progress in chat summarization
         this.storageService, // Pass StorageService for workspace file management
-        this.localAiHelper // Local-first one-shot AI helper (intent/suggestions/summary/project-name/voice)
+        this.localAiHelper, // Local-first one-shot AI helper (intent/suggestions/summary/project-name/voice)
+        this.claudeOAuthService // Claude-account OAuth (login-from-phone, portable.dev#18)
       )
     );
 

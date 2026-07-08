@@ -32,6 +32,7 @@ import type { NativeSocket } from '../socket';
 import { useChatStore, type NewChatSettings } from '../state';
 import { useOfflineQueueStore } from '../state/offlineQueueStore';
 import { useChatMessagesStore } from './chatMessagesStore';
+import { CLAUDE_ACCOUNT_ROUTE, isLoginCommand } from './composer/clientSlashCommands';
 import {
   createNewChatFlow,
   socketAckError,
@@ -265,6 +266,13 @@ export function useChatComposer(options: UseChatComposerOptions = {}): UseChatCo
   const submit = useCallback(
     async (files?: UploadedFile[]): Promise<boolean> => {
       const message = text.trim();
+      // `/login` is a client command — open the Claude Account sign-in instead
+      // of creating a chat (portable.dev#18). Works even while disconnected.
+      if (isLoginCommand(message)) {
+        setText('');
+        router.push(CLAUDE_ACCOUNT_ROUTE);
+        return true;
+      }
       if (!message || !socket || inFlightRef.current) return false;
       inFlightRef.current = true;
       projectCreatedRef.current = false;

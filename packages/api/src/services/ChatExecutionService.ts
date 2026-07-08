@@ -22,6 +22,7 @@ import { isWorkspaceChatTarget } from '@vgit2/shared/browserConstants';
 import { getUserWorkspaceDir, getWorkspaceTmpDir } from '@vgit2/shared/constants';
 import { DEFAULT_MODEL_MODE } from '@vgit2/shared/models';
 
+import { buildAiCredentialErrorBlock } from './aiCredentialErrorClassifier.js';
 import { isPidAlive } from './ExternalClaudeSessionService.js';
 import { HandshakeVerificationGate } from './HandshakeVerificationGate.js';
 
@@ -188,7 +189,19 @@ export class ChatExecutionService {
     const { userId, authToken, emitter } = context;
 
     try {
-      await this.chatService.updateLastReadMessageId(chatId, userId, messageId, authToken);
+      const persisted = await this.chatService.updateLastReadMessageId(
+        chatId,
+        userId,
+        messageId,
+        authToken
+      );
+
+      // A discovered/terminal chat (transcript-only, no persistent row) has no
+      // read cursor to store. That's expected, not an error — no-op silently
+      // and skip the multi-device broadcast (nothing changed).
+      if (!persisted) {
+        return { success: true };
+      }
 
       console.log(
         `[ChatExecutionService] ${userId} marked chat ${chatId} as read up to message ${messageId}`
@@ -1238,9 +1251,12 @@ export class ChatExecutionService {
     } catch (error: any) {
       console.error(`[ChatExecutionService] Error processing message for ${chatId}:`, error);
 
+      const errorText = error.message || 'Failed to process message';
+      const errorBlock = buildAiCredentialErrorBlock(errorText);
       emitter.emit('claude:error', {
         chatId,
-        error: error.message || 'Failed to process message',
+        error: errorText,
+        ...(errorBlock ? { errorBlock } : {}),
       });
 
       // Re-throw error so callers can handle it (important for testing)
@@ -1625,9 +1641,12 @@ export class ChatExecutionService {
       });
     } catch (error: any) {
       console.error('[ChatExecutionService] Claude Code error:', error);
+      const errorText = error.message || 'Failed to run Claude Code';
+      const errorBlock = buildAiCredentialErrorBlock(errorText);
       emitter.emit('claude:error', {
         chatId,
-        error: error.message || 'Failed to run Claude Code',
+        error: errorText,
+        ...(errorBlock ? { errorBlock } : {}),
       });
     }
   }
@@ -1748,7 +1767,12 @@ export class ChatExecutionService {
           } else if (data.type === 'claude_code_interrupted') {
             emitter.emit('claude:interrupted', { chatId });
           } else if (data.type === 'claude_code_error') {
-            emitter.emit('claude:error', { chatId, error: data.error });
+            const streamErrorBlock = buildAiCredentialErrorBlock(data.error);
+            emitter.emit('claude:error', {
+              chatId,
+              error: data.error,
+              ...(streamErrorBlock ? { errorBlock: streamErrorBlock } : {}),
+            });
           } else if (data.type === 'request_permission') {
             // Permissions are embedded in tool_use blocks
             console.log(`[ChatExecutionService] Permission request for tool: ${data.tool_name}`);

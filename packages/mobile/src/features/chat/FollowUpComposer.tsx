@@ -42,6 +42,7 @@ import {
 import { isModelMode, MODELS, MODEL_MODES, type ModelMode } from '@vgit2/shared/models';
 import { PERMISSIONS, PERMISSION_MODES, type PermissionMode } from '@vgit2/shared/permissions';
 import type { AgentSetup, ChatStatus } from '@vgit2/shared/types';
+import { router } from 'expo-router';
 import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
@@ -50,9 +51,12 @@ import {
   AgentAvatar,
   AgentSelectorSheet,
   AttachButton,
+  CLAUDE_ACCOUNT_ROUTE,
+  CLIENT_SLASH_COMMANDS,
   SelectorSheet,
   ShortFormComposer,
   SlashCommandPicker,
+  isLoginCommand,
   parseSlashQuery,
 } from './composer';
 import { DEFAULT_AGENT_SETUP } from './useChatComposer';
@@ -166,7 +170,14 @@ export const FollowUpComposer = forwardRef<FollowUpComposerHandle, FollowUpCompo
 
     // Insert `/<name> ` and keep focus so the user can add arguments before sending.
     // The trailing space ends the slash token, which dismisses the picker.
+    // `/login` is a client command — it navigates to the Claude Account sign-in
+    // instead of inserting text (never sent to Claude).
     const handlePickCommand = (name: string) => {
+      if (name === 'login') {
+        setText('');
+        router.push(CLAUDE_ACCOUNT_ROUTE);
+        return;
+      }
       setText(`/${name} `);
       setIsFocused(true);
       inputRef.current?.focus();
@@ -181,6 +192,12 @@ export const FollowUpComposer = forwardRef<FollowUpComposerHandle, FollowUpCompo
     const handleSend = () => {
       const content = text.trim();
       if (!content || isUploading) return;
+      // `/login` never reaches Claude — open the Claude Account sign-in instead.
+      if (isLoginCommand(content)) {
+        setText('');
+        router.push(CLAUDE_ACCOUNT_ROUTE);
+        return;
+      }
       const attachments = uploaded.length > 0 ? uploaded : undefined;
       onSend(content, attachments);
       setText('');
@@ -197,7 +214,7 @@ export const FollowUpComposer = forwardRef<FollowUpComposerHandle, FollowUpCompo
         {slashActive ? (
           <SlashCommandPicker
             direction="up"
-            commands={commandsQuery.data?.commands ?? []}
+            commands={[...CLIENT_SLASH_COMMANDS, ...(commandsQuery.data?.commands ?? [])]}
             query={slashQuery ?? ''}
             loading={commandsQuery.isLoading}
             onSelect={handlePickCommand}

@@ -23,6 +23,8 @@ export const queryKeys = {
   /** Background-process output file (`GET /api/task-output?path=`). */
   taskOutput: (path: string) => ['task-output', path] as const,
   userSettings: () => ['user-settings'] as const,
+  /** Claude-account AI credential status (`GET /api/ai-credentials/status`). */
+  aiCredentials: () => ['ai-credentials'] as const,
   agentSetups: () => ['agent-setups'] as const,
   mcps: () => ['mcps'] as const,
   pushSettings: () => ['push-settings'] as const,

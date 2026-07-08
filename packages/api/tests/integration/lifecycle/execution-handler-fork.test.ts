@@ -70,7 +70,10 @@ describe('fork-on-first-write — ExecutionHandler SDK options', () => {
       claudeService = claudeConfig.claudeService;
       authToken = claudeConfig.authToken;
       // Stub the local AI credential so the direct-mode path reaches the mocked query().
-      claudeService.setLocalAiCredentialsService({ applyToProcessEnv: () => 'api-key' } as any);
+      claudeService.setLocalAiCredentialsService({
+        applyToProcessEnv: () => 'api-key',
+        ensureFresh: async () => {},
+      } as any);
 
       executionService = new ChatExecutionService(
         chatService,

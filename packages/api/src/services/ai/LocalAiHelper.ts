@@ -74,6 +74,9 @@ export class LocalAiHelper {
    * to degrade.
    */
   async complete(prompt: string, opts: LocalAiCompletionOptions = {}): Promise<string> {
+    // Auto-refresh first (portable.dev#18) — never throws; a failed refresh
+    // falls through to the stored token and this call's own auth error.
+    await this.credentials.ensureFresh();
     const credential = this.credentials.resolveCredential();
     const isOAuth = credential.mode === 'claude-oauth';
 

@@ -15,6 +15,7 @@ import { UploadService } from '../services/UploadService.js';
 import { VoicePhrasesService } from '../services/VoicePhrasesService.js';
 
 // Import modular subroutes
+import { createAiCredentialsRoutes } from './subroutes/ai-credentials.routes.js';
 import { createChatRoutes } from './subroutes/chat.routes.js';
 import { createConnectionsRoutes } from './subroutes/connections.routes.js';
 import { createDevRoutes } from './subroutes/dev.routes.js';
@@ -26,6 +27,7 @@ import { createStorageRoutes } from './subroutes/storage.routes.js';
 import { createUserRoutes } from './subroutes/user.routes.js';
 
 import type { LocalAiHelper } from '../services/ai/LocalAiHelper.js';
+import type { ClaudeOAuthService } from '../services/ClaudeOAuthService.js';
 import type { ClaudeService } from '../services/ClaudeService.js';
 import type { SocketIOService } from '../services/SocketIOService.js';
 import type { SOPService } from '../services/SOPService.js';
@@ -60,7 +62,8 @@ export function createApiRoutes(
   pushNotificationService?: PushNotificationService, // Optional: Push notification service
   sopService?: any, // Optional: SOPService for SOP progress in chat summarization
   storageService?: StorageService, // Optional: Storage management service
-  localAiHelper?: LocalAiHelper // Optional: local-first one-shot AI helper (intent/suggestions/voice)
+  localAiHelper?: LocalAiHelper, // Optional: local-first one-shot AI helper (intent/suggestions/voice)
+  claudeOAuthService?: ClaudeOAuthService // Optional: Claude-account OAuth (login-from-phone, portable.dev#18)
 ): Router {
   const router = Router();
 
@@ -139,6 +142,11 @@ export function createApiRoutes(
   // Storage management routes (workspace file browsing and cleanup)
   if (storageService) {
     router.use('/storage', createStorageRoutes(storageService));
+  }
+
+  // Claude-account credential routes (sign in with Claude from the phone)
+  if (claudeOAuthService) {
+    router.use('/ai-credentials', createAiCredentialsRoutes(claudeOAuthService));
   }
 
   // ============================================================================
