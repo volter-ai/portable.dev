@@ -93,6 +93,51 @@ export const queryKeys = {
     ['file-history', owner, repo, path] as const,
   /** Per-repo working-tree status (branch, ahead/behind, staged/modified/untracked). */
   gitStatus: (owner: string, repo: string) => ['git-status', owner, repo] as const,
+  /**
+   * Source-control working-tree changes — the grouped Conflicts/Staged/Unstaged/
+   * Untracked surface (`GET /api/source-control/:o/:r/status`). Keyed apart from
+   * `gitStatus` (the lightweight counters endpoint) so the two never collide.
+   */
+  workingTreeChanges: (owner: string, repo: string, worktree?: string) =>
+    (worktree
+      ? ['working-tree-changes', owner, repo, worktree]
+      : ['working-tree-changes', owner, repo]) as readonly unknown[],
+  /**
+   * Per-file unified diff for the source-control Changes view
+   * (`GET /api/source-control/:o/:r/file-diff?path=&staged=[&worktree=]`). Keyed
+   * by path + staged so the staged/unstaged diffs of the same file never
+   * overwrite; the optional `worktree` (Worktrees tab) scopes the diff to a
+   * non-main worktree so its diffs never collide with the main checkout's
+   * (omitted → the main-checkout key shape).
+   */
+  sourceControlFileDiff: (
+    owner: string,
+    repo: string,
+    path: string,
+    staged: boolean,
+    worktree?: string
+  ) =>
+    (worktree
+      ? ['source-control-file-diff', owner, repo, path, staged, worktree]
+      : ['source-control-file-diff', owner, repo, path, staged]) as readonly unknown[],
+  /**
+   * The repo's git worktrees — the read-only Worktrees tab list
+   * (`GET /api/source-control/:o/:r/worktrees`). Keyed apart from every other
+   * source-control read.
+   */
+  worktrees: (owner: string, repo: string) => ['worktrees', owner, repo] as const,
+  /**
+   * Multi-lane commit graph for the source-control Graph segment
+   * (`GET /api/source-control/:o/:r/graph` — `useInfiniteQuery`, keyed apart from
+   * the working-tree/diff reads).
+   */
+  commitGraph: (owner: string, repo: string) => ['commit-graph', owner, repo] as const,
+  /**
+   * A single commit's detail (changed files + patch) for the commit-detail screen
+   * (`GET /api/source-control/:o/:r/commit/:sha`). Keyed by sha.
+   */
+  commitDetail: (owner: string, repo: string, sha: string) =>
+    ['commit-detail', owner, repo, sha] as const,
   /** Contextual quick actions derived from the repo's package scripts. */
   quickActions: (owner: string, repo: string) => ['quick-actions', owner, repo] as const,
 } as const;

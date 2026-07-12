@@ -12,6 +12,7 @@ import session from 'express-session';
 import cors from 'cors';
 import { createAuthRoutes } from '../../../src/routes/auth.routes.js';
 import { createApiRoutes } from '../../../src/routes/api.routes.js';
+import { createSourceControlRoutes } from '../../../src/routes/subroutes/source-control.routes.js';
 import { createTunnelRoutes } from '../../../src/routes/tunnel.routes.js';
 import { createJwtAuthMiddleware } from '../../../src/middleware/jwtAuth.js';
 import { AuthService } from '../../../src/services/AuthService.js';
@@ -28,6 +29,7 @@ import { WORKSPACE_DIR } from '@vgit2/shared/constants';
 import { ClaudeService } from '../../../src/services/ClaudeService.js';
 import { SlackClient } from '../../../src/services/SlackClient.js';
 import { SocketIOService } from '../../../src/services/SocketIOService.js';
+import { SourceControlService } from '../../../src/services/SourceControlService.js';
 import { LocalSecretsVaultAdapter } from '../../../src/db/LocalSecretsVaultAdapter.js';
 
 import type { ClaudeOAuthService } from '../../../src/services/ClaudeOAuthService.js';
@@ -69,6 +71,12 @@ export interface TestServerOptions {
    * Optional StorageService instance (with custom basePath for testing)
    */
   storageService?: StorageService;
+
+  /**
+   * Optional SourceControlService instance (mobile Source Control tabs,
+   * portable.dev#17) — defaults to a real service over the test services above.
+   */
+  sourceControlService?: SourceControlService;
 
   /**
    * Optional ClaudeOAuthService (mounts /api/ai-credentials when provided)
@@ -323,6 +331,16 @@ export function createTestServer(options: TestServerOptions): Application {
       undefined, // localAiHelper
       options.claudeOAuthService // claudeOAuthService (mounts /api/ai-credentials)
     )
+  );
+
+  // Mobile Source Control tabs (portable.dev#17) — same isolated mount as
+  // server.ts (a sibling of the /api router, not wired into createApiRoutes).
+  const sourceControlService =
+    options.sourceControlService ||
+    new SourceControlService(connectionsService, authService, gitLocalService);
+  app.use(
+    '/api/source-control',
+    createSourceControlRoutes(sourceControlService, authService, gitLocalService)
   );
 
   app.use(createTunnelRoutes(tunnelService as any));

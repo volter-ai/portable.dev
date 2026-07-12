@@ -26,13 +26,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { BranchWithDate } from '@vgit2/shared/types';
 
 import { Icon, useAppTheme } from '../../theme';
+// Direct FILE import (the sanctioned cross-feature pattern — never the chat barrel).
+import { KeyboardAvoidingView } from '../chat/KeyboardAvoidingViewCompat';
 import { ActionsTab } from './ActionsTab';
+import { FilesTab } from './FilesTab';
 import { GenerationsTab } from './GenerationsTab';
 import { IssuesTab } from './IssuesTab';
 import { OverviewTab } from './OverviewTab';
 import { PullsTab } from './PullsTab';
 import { SettingsTab } from './SettingsTab';
+import { SourceControlTab } from './SourceControlTab';
 import { WorkflowsTab } from './WorkflowsTab';
+import { WorktreesTab } from './WorktreesTab';
 import { RowCard } from './RowCard';
 import { IMPLEMENTED_REPO_TABS, REPO_TABS, type RepoTab } from './repoTabs';
 import { useRepoBranches, type UseRepoBranchesOptions } from './useRepoBranches';
@@ -69,7 +74,10 @@ export function RepoPageScreen({
   const avatarUrl = details.data?.owner?.avatar_url;
 
   return (
-    <View
+    // KeyboardAvoidingView so the bottom-docked inputs (the worktree chat
+    // composer + the Changes commit composer) rise above the keyboard.
+    <KeyboardAvoidingView
+      behavior="padding"
       style={[
         styles.container,
         { paddingTop: insets.top, backgroundColor: theme.colors.background },
@@ -158,11 +166,17 @@ export function RepoPageScreen({
           <GenerationsTab owner={owner} repo={repo} />
         ) : activeTab === 'settings' ? (
           <SettingsTab owner={owner} repo={repo} />
+        ) : activeTab === 'source-control' ? (
+          <SourceControlTab owner={owner} repo={repo} />
+        ) : activeTab === 'worktrees' ? (
+          <WorktreesTab owner={owner} repo={repo} />
+        ) : activeTab === 'files' ? (
+          <FilesTab owner={owner} repo={repo} navigate={navigate} />
         ) : (
           <PlaceholderTab tab={activeTab} />
         )}
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 

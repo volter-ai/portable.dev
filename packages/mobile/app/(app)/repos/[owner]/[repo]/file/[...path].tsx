@@ -17,7 +17,8 @@ export default function FileViewRoute() {
 
   const repoTarget = (expandPath: string) => ({
     pathname: '/repos/[owner]/[repo]' as const,
-    params: { owner: owner ?? '', repo: repo ?? '', tab: 'overview', expandPath },
+    // The directory tree lives in the repo's Files tab — breadcrumb/back targets land there.
+    params: { owner: owner ?? '', repo: repo ?? '', tab: 'files', expandPath },
   });
 
   return (
@@ -27,7 +28,7 @@ export default function FileViewRoute() {
       filePath={filePath}
       onBack={() => {
         // AC4: on a deep-link cold-launch canDismiss()=false → no prior screen
-        // to back to; navigate to the repo overview instead of a silent no-op.
+        // to back to; navigate to the repo Files tab instead of a silent no-op.
         if (router.canDismiss()) {
           router.back();
         } else {

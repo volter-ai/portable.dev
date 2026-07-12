@@ -512,6 +512,50 @@ describe('startRepoChatFlow (repo Overview → new chat)', () => {
     expect(navigated).toEqual([]);
   });
 
+  it('a worktree rides the chat:create payload (start a chat INSIDE a worktree)', async () => {
+    const emitted: ChatCreatePayload[] = [];
+
+    await startRepoChatFlow({
+      owner: 'octocat',
+      repo: 'hello',
+      settings: DEFAULT_NEW_CHAT_SETTINGS,
+      message: 'Fix the flaky test',
+      worktree: '/ws/hello/.worktrees/17',
+      emitCreateChat: async (payload) => {
+        emitted.push(payload);
+        return { success: true };
+      },
+      emitSendMessage: async () => ({ success: true }),
+      navigate: () => {},
+      makeChatId: () => 'chat-test-wt',
+    });
+
+    expect(emitted[0]).toMatchObject({
+      chatId: 'chat-test-wt',
+      owner: 'octocat',
+      repo: 'hello',
+      worktree: '/ws/hello/.worktrees/17',
+    });
+  });
+
+  it('without a worktree the chat:create payload carries none (unchanged wire shape)', async () => {
+    const emitted: ChatCreatePayload[] = [];
+
+    await startRepoChatFlow({
+      owner: 'octocat',
+      repo: 'hello',
+      settings: DEFAULT_NEW_CHAT_SETTINGS,
+      emitCreateChat: async (payload) => {
+        emitted.push(payload);
+        return { success: true };
+      },
+      navigate: () => {},
+      makeChatId: () => 'chat-test-nowt',
+    });
+
+    expect('worktree' in emitted[0]).toBe(false);
+  });
+
   it('optimistically marks the run started BEFORE navigating when a first message is seeded', async () => {
     useChatMessagesStore.getState().reset();
     let statusAtNavigate: string | undefined;

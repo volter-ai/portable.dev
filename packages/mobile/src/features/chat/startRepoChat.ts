@@ -29,6 +29,12 @@ export interface StartRepoChatDeps {
    * and is sent into the chat right after creation. Requires `emitSendMessage`.
    */
   message?: string;
+  /**
+   * Optional absolute path of a git worktree of `owner/repo` — the chat then
+   * RUNS inside that worktree (the backend validates the path against the
+   * repo's real worktree set and persists it as the chat cwd). portable.dev#17.
+   */
+  worktree?: string;
   /** `chat:create` emitter (ack `{ success }`). */
   emitCreateChat: (payload: ChatCreatePayload) => Promise<{ success?: boolean; error?: string }>;
   /** `chat:message` emitter — only used when `message` is set. */
@@ -66,6 +72,7 @@ export async function startRepoChatFlow(deps: StartRepoChatDeps): Promise<string
     model: settings.model,
     permissions: settings.permissions,
     agentSetupId: settings.agentSetupId,
+    ...(deps.worktree ? { worktree: deps.worktree } : {}),
   });
   if (ack?.success === false) {
     throw new Error(ack.error ?? 'Failed to create chat');

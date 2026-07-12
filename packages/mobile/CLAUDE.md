@@ -635,15 +635,20 @@ search?, language?`) so tests register the exact URL. Cards show owner avatar + 
   backend — the RN client never shells out to git). `blockedOrgsStore` feeds a `blockedOrgs` param
   (the backend filters).
 - **RepoPage** (`src/features/repo/`, route `app/repos/[owner]/[repo].tsx`). Tab set single-sourced
-  in `repoTabs.ts`: `overview, issues, prs, actions, workflows, generations, branches, settings`.
-  `resolveRepoTab` falls back to `overview`; add a tab's key to `IMPLEMENTED_REPO_TABS` to stop the
-  placeholder. Detail navigation is local component state inside each tab (no nested route).
+  in `repoTabs.ts`, canonical order: `overview, source-control, worktrees, files, issues, prs,
+actions, workflows, generations, branches, settings`. `resolveRepoTab` falls back to `overview`;
+  add a tab's key to `IMPLEMENTED_REPO_TABS` to stop the placeholder. Detail navigation is local
+  component state inside each tab (no nested route).
   - **Overview** = the working dashboard (no README): homepage link bar, the "Work on {repo}…"
     input (cloned) or a Clone-to-Local card (`POST /api/repos/:o/:r/clone`), quick-action pills, a
-    git status bar, and a directory tree (lazy per-folder `useRepoTree`; file tap → the file
-    viewer). The refresh glyph invalidates the `treePrefix` (root + every expanded level). Data:
+    git status bar, and the "Continue chats" area FILLING the remaining space (the home page's
+    anchored `fill` mode — the page never scrolls as a whole; only the chats area scrolls). Data:
     `useRepoDetails` → `GET /api/repos/:o/:r?skipGitOperations=true`. The chat hand-off reuses
     `startRepoChatFlow`.
+  - **Files** = the directory tree (lazy per-folder `useRepoTree`; file tap → the file viewer),
+    promoted out of the Overview into its own tab so the dashboard stays chat-first. The refresh
+    glyph invalidates the `treePrefix` (root + every expanded level). Gates on
+    `useRepoDetails().isLocal` → `CloneFirstNotice`.
   - **Branches / Issues / PRs / Actions / Workflows / Generations / Settings** — each a
     `useInfiniteQuery`/`useQuery` over the corresponding `/api/repos/:o/:r/...` endpoint. Several
     responses are SUPERSETS of (or diverge from) the loose shared types — declare local types.
@@ -652,6 +657,43 @@ search?, language?`) so tests register the exact URL. Cards show owner avatar + 
     detail returns `{ issue/pr, timeline, files }`. Issue mutations (comment, assignee) and
     workflow-file CRUD invalidate the matching query. Status glyphs are TEXT (FontAwesome is
     web-only). Settings + Generations are read-only.
+  - **Source Control / Worktrees** (portable.dev#17) — a Cursor-style git surface over the repo's
+    local clone via the isolated backend `/api/source-control/*` factory. **Source Control** =
+    a segmented `[ Graph | Changes ]`: a multi-lane colored commit DAG (`CommitGraphView` +
+    react-native-svg; pure lane layout in `computeCommitLanes`; `useCommitGraph` `useInfiniteQuery`;
+    tap → `CommitDetailScreen`) and a grouped Changes view (`ChangesView` — Conflicts/Staged/Unstaged/
+    Untracked with stage/unstage/discard + a commit composer + push/pull via `PushPullHeader`; tap a
+    file → `FileDiffScreen`). The header's branch label opens the SEARCHABLE branch/worktree
+    switcher (the shared `SelectorSheet`, type-to-filter): every worktree listed by its checked-out
+    branch; picking one re-scopes the header + Changes reads AND the header's Push / Pull to that
+    worktree (mutation body carries `worktree`; a fresh worktree branch is auto-published via
+    `--set-upstream` on first push). The Graph stays repo-wide; the COMMIT composer stays
+    main-checkout-only — a worktree-scoped Changes view instead docks `WorktreeChatComposer`
+    (start a chat that RUNS inside that worktree: the worktree path rides `chat:create` →
+    the backend validates it and persists it as the chat's `repo_path`/cwd). It renders the
+    SAME widget as the Overview's "Work on {repo}…" input — the shared `RepoChatInput`
+    (ShortFormComposer card + slash-command picker, opening UP from the docked footer);
+    `RepoPageScreen` wraps the whole page in the compat `KeyboardAvoidingView` so the
+    bottom-docked inputs (worktree chat + commit composer) rise above the keyboard. **Conflict gate:**
+    while the scoped status has unmerged files (e.g. a pull that stopped on conflicts — the
+    backend answers `{ pulled: false, conflicts: true }`, still 200), Push is disabled with a
+    warning (`source-control-conflict-warning`); the backend enforces the same rule with a 409.
+    **Worktrees** = a list (`WorktreesView`/`useWorktrees`) whose rows open
+    `WorktreeChangesScreen` — the same worktree-scoped surface (PushPullHeader + `ChangesView`
+    - `WorktreeChatComposer`, status/file-diff/stage scoped by the `?worktree=` param, which
+      the backend validates against the real `git worktree list` set); worktree CREATE/REMOVE/PRUNE
+      stay out of scope. Diffs render through the shared
+      `src/components/UnifiedDiffView.tsx` (extracted from `PullViewer`). Both tabs gate on
+      `useRepoDetails().isLocal` → `CloneFirstNotice`. Query keys: `commitGraph`/`commitDetail`/
+      `workingTreeChanges`/`sourceControlFileDiff`/`worktrees` (mutations also invalidate `gitStatus`).
+      **Freshness (`sourceControlRefresh.ts`):** the PC mutates the repo out-of-band with no
+      socket signal, so every source-control read uses `staleTime: 0` (each tab remount /
+      worktree re-scope refetches in the background), every list (Changes / Worktrees / Graph —
+      incl. empty/error states) has pull-to-refresh (`usePullToRefresh`), and the repo ROUTE
+      SHELL calls `useSourceControlFocusRefresh` (re-focus after the pushed diff/commit screens
+      invalidates the ACTIVE source-control queries; skip-first-focus). The focus hook stays out
+      of the tab components — they have no navigator under test (the chatListPolling precedent).
+      Opening the branch switcher also re-reads the worktree list.
 - **File viewers** (`src/features/file-viewer/`, route `app/repos/[owner]/[repo]/file/[...path].tsx`).
   `detectFileType` dispatches to a native viewer. **TEXT** (`GET .../contents/<path>` → base64,
   decoded) → `CodeViewer` (reuses `CodeHighlight`, a line-number toggle) / `MarkdownViewer` /

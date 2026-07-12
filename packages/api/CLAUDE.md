@@ -24,13 +24,31 @@ Contrast with `@vgit2/gateway`, the public `app.portable.dev` auth + reverse-pro
   only registers a JSON 404 + the global error handler.
 - **`src/services/`** — service classes grouped by domain: execution (ClaudeService,
   ChatExecutionService, SocketIOService), chat/data (ChatService), github+repos (GitHubApiService,
-  GitLocalService, ConnectionsService, ActiveGitHubConnectionCache, ReposCacheService), MCP
-  (`mcp/`), media (Upload/Generations), runtime (SessionReaperService, RuntimeStateService),
-  db+secrets, auth (DeviceTokenService, LocalAiCredentialsService, LocalGitHubAuthService). Plus
-  `emitters/` (the `IOutputEmitter` abstraction).
+  GitLocalService, ConnectionsService, ActiveGitHubConnectionCache, ReposCacheService,
+  SourceControlService), MCP (`mcp/`), media (Upload/Generations), runtime (SessionReaperService,
+  RuntimeStateService), db+secrets, auth (DeviceTokenService, LocalAiCredentialsService,
+  LocalGitHubAuthService). Plus `emitters/` (the `IOutputEmitter` abstraction). The hardened git
+  spawn runner (`runGit`/`RunGitOptions`/`GitResourceLimitError`) lives in `services/git/runGit.ts`,
+  shared by `GitLocalService` and `SourceControlService`.
 - **`src/routes/`** — thin route files that ONLY delegate to services: `auth.routes.ts`,
   `api.routes.ts`, `tunnel.routes.ts`, and `subroutes/` (chat, connections, user, repository,
-  secrets, storage, health, dev, tunnel-api, misc). **Endpoint tables live in the README.**
+  secrets, storage, health, dev, tunnel-api, source-control, misc). **Endpoint tables live in the
+  README.**
+  - **`source-control.routes.ts`** (`/api/source-control`, portable.dev#17) — the isolated factory
+    backing the mobile Source Control + Worktrees tabs. `SourceControlService` reads/writes the
+    repo's local clone via the shared `runGit`: commit graph, grouped working-tree changes, file and
+    commit diffs, worktree list, and the git write loop (stage/unstage/discard/commit/push/pull).
+    Commits are authored via `resolveGitAuthorIdentity` (the user's GitHub login); push/pull
+    authenticate with the user's GitHub token through a one-shot inline credential helper (token in
+    env only). Stage/unstage/discard/status/file-diff AND push/pull take an optional `worktree`
+    (validated by the containment guard: inside the checkout, or listed by `git worktree list` —
+    else 400). A pull stopped by merge conflicts is a NORMAL 200 `{ pulled: false, conflicts: true }`;
+    a push while the tree has unmerged files → 409 (`MergeConflictsError`); a push with no upstream
+    auto-publishes (`--set-upstream origin <branch>`). `chat:create` also accepts a `worktree`
+    (validated via `SourceControlService.resolveWorktreePath`, injected into `ChatExecutionService`)
+    so a chat can RUN inside a worktree — its path is persisted as the chat's `repo_path`/cwd.
+    A NEW sibling mount — it touches no existing git route, and rides the `/api`
+    e2eEnforcement + JWT middleware like every other protected surface.
 - **`src/db/`** — `DbAdapter` interface. **`SqliteDbAdapter`** is the active adapter for EVERY
   domain (chats, connections, themes, push, service accounts + audit, secrets vault); the runtime
   boots with no external-database env. `JsonDbAdapter` is legacy (migration source only, not wired).
