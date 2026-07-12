@@ -4,6 +4,24 @@ Patch notes for the Portable CLI, published to npm as
 [`@volter-ai/portable.dev`](https://www.npmjs.com/package/@volter-ai/portable.dev).
 Versions follow the monorepo release version.
 
+## [3.5.3] - 2026-07-11
+
+### Added
+
+- Source Control on the repo page: browse the commit history graph, review your changes
+  with full diffs, then stage, discard, commit, push, and pull — all from your phone.
+- Worktree support: see a repo's worktrees, switch the Source Control view between them
+  with a searchable branch picker, push and pull a worktree's branch (with merge-conflict
+  protection), and start a chat that runs directly inside a worktree.
+- A new Files tab hosts the repo file tree.
+
+### Changed
+
+- Repo tabs were reordered, and the Overview is now a pinned dashboard with more room for
+  your recent chats.
+- Source Control refreshes automatically when you come back to it, and supports
+  pull-to-refresh.
+
 ## [3.5.2] - 2026-07-08
 
 ### Added

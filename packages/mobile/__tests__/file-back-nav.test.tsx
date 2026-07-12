@@ -197,7 +197,7 @@ describe('FileViewRoute onNavigate (AC2 + AC4)', () => {
         params: expect.objectContaining({
           owner: OWNER,
           repo: REPO,
-          tab: 'overview',
+          tab: 'files',
           expandPath: '',
         }),
       })
@@ -217,7 +217,7 @@ describe('FileViewRoute onNavigate (AC2 + AC4)', () => {
         params: expect.objectContaining({
           owner: OWNER,
           repo: REPO,
-          tab: 'overview',
+          tab: 'files',
           expandPath: 'src/utils',
         }),
       })
@@ -235,7 +235,7 @@ describe('FileViewRoute onNavigate (AC2 + AC4)', () => {
     expect(expoRouter.router.navigate).toHaveBeenCalledWith(
       expect.objectContaining({
         pathname: '/repos/[owner]/[repo]',
-        params: expect.objectContaining({ owner: OWNER, repo: REPO, tab: 'overview' }),
+        params: expect.objectContaining({ owner: OWNER, repo: REPO, tab: 'files' }),
       })
     );
     expect(expoRouter.router.dismissTo).not.toHaveBeenCalled();
@@ -331,7 +331,7 @@ describe('FileViewRoute onBack (AC4 back-button guard)', () => {
         params: expect.objectContaining({
           owner: OWNER,
           repo: REPO,
-          tab: 'overview',
+          tab: 'files',
           expandPath: '',
         }),
       })

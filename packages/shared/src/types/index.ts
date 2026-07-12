@@ -211,6 +211,10 @@ export type {
   FileContent,
   TreeEntry,
   Tree,
+  CommitRef,
+  CommitGraphNode,
+  ChangedFile,
+  Worktree,
 } from './github.js';
 
 // ============================================================================
@@ -353,6 +357,18 @@ export type {
 
   // Chat settings
   GetChatSettingsResponse,
+
+  // Mobile Source Control (portable.dev#17)
+  GetCommitGraphResponse,
+  GetCommitDetailResponse,
+  GetWorkingTreeChangesResponse,
+  GetFileDiffResponse,
+  GetWorktreesResponse,
+  CommitResponse,
+  PushResponse,
+  PullResponse,
+  StageResponse,
+  WorktreeMutationResponse,
 } from './api.js';
 
 // ============================================================================

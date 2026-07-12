@@ -7,6 +7,7 @@
 export { RepoPageScreen, type RepoPageScreenProps } from './RepoPageScreen';
 export { useRepoPage, type UseRepoPage, type UseRepoPageOptions } from './useRepoPage';
 export { OverviewTab, type OverviewTabProps } from './OverviewTab';
+export { FilesTab, type FilesTabProps } from './FilesTab';
 export {
   useRepoOverview,
   useRepoDetails,
@@ -83,3 +84,49 @@ export {
   type RepoDetails,
   type Collaborator,
 } from './useRepoSettings';
+export { SourceControlTab, type SourceControlTabProps } from './SourceControlTab';
+export { WorktreesTab, type WorktreesTabProps } from './WorktreesTab';
+export { WorktreesView, type WorktreesViewProps } from './WorktreesView';
+export { WorktreeChangesScreen, type WorktreeChangesScreenProps } from './WorktreeChangesScreen';
+export { CloneFirstNotice, type CloneFirstNoticeProps } from './CloneFirstNotice';
+export { ChangesView, statusBadgeLetter, type ChangesViewProps } from './ChangesView';
+export { FileDiffScreen, type FileDiffScreenProps } from './FileDiffScreen';
+export { useWorktrees, type UseWorktrees, type UseWorktreesOptions } from './useWorktrees';
+export {
+  useWorkingTreeChanges,
+  type UseWorkingTreeChanges,
+  type UseWorkingTreeChangesOptions,
+} from './useWorkingTreeChanges';
+export {
+  useStageMutations,
+  type UseStageMutations,
+  type UseStageMutationsOptions,
+} from './useStageMutations';
+export { useCommit, type UseCommit } from './useCommit';
+export { usePushPull, type UsePushPull, type UsePushPullOptions } from './usePushPull';
+export { PushPullHeader, type PushPullHeaderProps } from './PushPullHeader';
+export { WorktreeChatComposer, type WorktreeChatComposerProps } from './WorktreeChatComposer';
+export { useFileDiff, type UseFileDiff } from './useFileDiff';
+export {
+  CommitGraphView,
+  LANE_WIDTH,
+  MAX_VISIBLE_LANES,
+  relativeCommitDate,
+  type CommitGraphViewProps,
+} from './CommitGraphView';
+export { CommitDetailScreen, type CommitDetailScreenProps } from './CommitDetailScreen';
+export { useCommitGraph, type UseCommitGraph, type UseCommitGraphOptions } from './useCommitGraph';
+export {
+  usePullToRefresh,
+  useSourceControlFocusRefresh,
+  type PullToRefresh,
+} from './sourceControlRefresh';
+export { useCommitDetail, splitDiffByFile, type UseCommitDetail } from './useCommitDetail';
+export {
+  computeCommitLanes,
+  laneColor,
+  maxLaneColumn,
+  LANE_COLORS,
+  type LaneRow,
+  type LaneEdge,
+} from './commitLanes';

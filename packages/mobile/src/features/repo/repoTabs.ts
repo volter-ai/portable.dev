@@ -1,8 +1,10 @@
 /**
  * Repo-page tab catalog + allowed-tabs guard.
  *
- * The wired tab set is `['overview','issues','prs','actions','workflows',
- * 'generations','branches','settings']`. All wired tabs render content;
+ * Canonical order: `overview`, then the two source-control surfaces
+ * (`source-control`, `worktrees` — portable.dev#17), then `files` (the
+ * directory tree, promoted out of the Overview dashboard), then the GitHub
+ * surfaces (`issues` … `settings`). All wired tabs render content;
  * {@link IMPLEMENTED_REPO_TABS} is the full set.
  *
  * `resolveRepoTab` is the allowed-tabs guard: a known tab name is honored,
@@ -21,6 +23,9 @@ export interface RepoTabDef {
  */
 export const REPO_TABS = [
   { key: 'overview', label: 'Overview' },
+  { key: 'source-control', label: 'Source Control' },
+  { key: 'worktrees', label: 'Worktrees' },
+  { key: 'files', label: 'Files' },
   { key: 'issues', label: 'Issues' },
   { key: 'prs', label: 'PRs' },
   { key: 'actions', label: 'Actions' },
@@ -38,7 +43,10 @@ export type RepoTab =
   | 'actions'
   | 'workflows'
   | 'generations'
-  | 'settings';
+  | 'settings'
+  | 'source-control'
+  | 'worktrees'
+  | 'files';
 
 /** The wired tab keys (recognition set for the allowed-tabs guard). */
 export const REPO_TAB_KEYS: readonly RepoTab[] = REPO_TABS.map((t) => t.key);
@@ -56,6 +64,9 @@ export const IMPLEMENTED_REPO_TABS: readonly RepoTab[] = [
   'workflows',
   'generations',
   'settings',
+  'source-control',
+  'worktrees',
+  'files',
 ];
 
 /**

@@ -343,3 +343,59 @@ export interface Tree {
   tree: TreeEntry[];
   truncated: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Mobile Source Control (portable.dev#17) — local-git contracts.
+// Purely additive. These describe data derived from the repo's local clone
+// under the workspace dir (git CLI), NOT the GitHub REST API. The lightweight
+// CommitGraphNode intentionally does NOT reuse the heavy GitHub-REST `Commit`
+// above.
+// ---------------------------------------------------------------------------
+
+/**
+ * A ref (decoration) pointing at a local-git commit.
+ */
+export interface CommitRef {
+  name: string;
+  type: 'head' | 'branch' | 'remote' | 'tag';
+}
+
+/**
+ * A single node in the local commit DAG used by the mobile commit graph.
+ */
+export interface CommitGraphNode {
+  sha: string;
+  parents: string[];
+  refs: CommitRef[];
+  author: string;
+  date: string;
+  subject: string;
+}
+
+/**
+ * A changed file in the working tree or in a commit.
+ */
+export interface ChangedFile {
+  path: string;
+  status: 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'conflicted';
+  staged: boolean;
+  insertions?: number;
+  deletions?: number;
+  previousPath?: string;
+}
+
+/**
+ * A git worktree (from `git worktree list --porcelain`).
+ */
+export interface Worktree {
+  path: string;
+  head: string;
+  branch?: string;
+  detached: boolean;
+  bare: boolean;
+  locked: boolean;
+  lockedReason?: string;
+  prunable: boolean;
+  prunableReason?: string;
+  isMain: boolean;
+}

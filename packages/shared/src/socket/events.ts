@@ -103,6 +103,12 @@ export interface ChatCreatePayload {
   model?: string;
   permissions?: string;
   agentSetupId?: string;
+  /**
+   * Optional absolute path of a git worktree of `owner/repo` — the chat then
+   * RUNS inside that worktree (its path becomes the chat's `repo_path`/cwd).
+   * Validated server-side against the repo's real worktree set.
+   */
+  worktree?: string;
 }
 
 /** `chat:join` — `count` (recent N) and `limit`/`offset` (paged) are alternatives. */

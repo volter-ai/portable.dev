@@ -39,6 +39,7 @@ import { createApiRoutes } from './routes/api.routes.js';
 import { createAuthRoutes } from './routes/auth.routes.js';
 import { createE2eRoutes, createLoopbackDispatch } from './routes/subroutes/e2e.routes.js';
 import { createInternalRoutes } from './routes/subroutes/internal.routes.js';
+import { createSourceControlRoutes } from './routes/subroutes/source-control.routes.js';
 import { createStopOnPcRoutes } from './routes/subroutes/stop-on-pc.routes.js';
 import { createTunnelApiRoutes } from './routes/subroutes/tunnel-api.routes.js';
 import { createTunnelRoutes } from './routes/tunnel.routes.js';
@@ -70,6 +71,7 @@ import { RepoViewTrackerService } from './services/RepoViewTrackerService.js';
 import { SecretsService } from './services/SecretsService.js';
 import { SocketIOService } from './services/SocketIOService.js';
 import { SOPService } from './services/SOPService.js';
+import { SourceControlService } from './services/SourceControlService.js';
 import { UploadService } from './services/UploadService.js';
 
 // Routes
@@ -137,6 +139,7 @@ class Server {
   private chatService!: ChatService;
   private uploadService!: UploadService;
   private gitLocalService!: GitLocalService;
+  private sourceControlService!: SourceControlService;
   private githubApiService!: GitHubApiService;
   private userSecretsService!: SecretsService;
   private leaderboardService!: LeaderboardService;
@@ -412,6 +415,14 @@ class Server {
       this.connectionsService
     );
 
+    // Mobile Source Control + Worktrees tabs (portable.dev#17): isolated git
+    // read/write service over the repo's local clone under the workspace dir.
+    this.sourceControlService = new SourceControlService(
+      this.connectionsService,
+      this.authService,
+      this.gitLocalService
+    );
+
     this.githubApiService = new GitHubApiService(
       reposCacheService,
       this.connectionsService,
@@ -645,7 +656,8 @@ class Server {
       reposCacheService, // ReposCacheService for cache invalidation
       this.handshakeVerificationGate, // outdated-build block kill switch
       this.externalClaudeSessionService, // rev12: adopt-vs-fork gate
-      this.stopOnPcService // rev12 D63: stop-on-send (interactive send ends the terminal session)
+      this.stopOnPcService, // rev12 D63: stop-on-send (interactive send ends the terminal session)
+      this.sourceControlService // portable.dev#17: chat:create worktree validation
     );
 
     // Wire up circular dependency: ClaudeService needs ChatExecutionService for create_chat tool
@@ -934,6 +946,15 @@ class Server {
     // This is kept separate for future extraction into separate backend
     // No authentication required - it's just a game!
     this.app.use('/vibewaiting', createVibewaitingRoutes(this.leaderboardService));
+
+    // Mobile Source Control + Worktrees tabs (portable.dev#17). Isolated
+    // factory — a sibling of the api.routes.ts mount, NOT wired into it — so
+    // the existing git service/routes stay untouched. The /api prefix keeps it
+    // behind the E2E enforcement + JWT middleware mounted above.
+    this.app.use(
+      '/api/source-control',
+      createSourceControlRoutes(this.sourceControlService, this.authService, this.gitLocalService)
+    );
   }
 
   private setupStaticFiles(): void {

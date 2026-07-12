@@ -11,10 +11,11 @@
  *   2. an unknown `?tab=` param is ignored and falls back to the wired default
  *      (`overview`), per the allowed-tabs guard;
  *   3. the Overview tab renders the `RepoHomeTab` dashboard: the
- *      "Work on {repo}..." input, quick-action pills, the git status bar, and
- *      the lazily expanding file tree (file tap → file viewer route) when the
- *      repo is cloned — and the Clone-to-Local card when it is not;
- *   4. the Branches tab lists branches with last-commit dates (`/branches`) and
+ *      "Work on {repo}..." input, quick-action pills, and the git status bar
+ *      when the repo is cloned — and the Clone-to-Local card when it is not;
+ *   4. the Files tab renders the lazily expanding file tree (file tap → file
+ *      viewer route) for a cloned repo — and the clone gate when it is not;
+ *   5. the Branches tab lists branches with last-commit dates (`/branches`) and
  *      exposes a per-branch comparison action.
  */
 
@@ -130,6 +131,12 @@ function cloneUrl(): string {
 function chatsUrl(): string {
   return `${SANDBOX_BASE}/api/chats`;
 }
+function graphUrl(): string {
+  return `${SANDBOX_BASE}/api/source-control/${OWNER}/${REPO}/graph`;
+}
+function statusUrl(): string {
+  return `${SANDBOX_BASE}/api/source-control/${OWNER}/${REPO}/status`;
+}
 
 /** Bare repo-details payload (`GET /api/repos/:o/:r?skipGitOperations=true`). */
 function repoDetails(overrides: Record<string, unknown> = {}) {
@@ -201,8 +208,8 @@ describe('RepoPage shell + Overview dashboard/Branches tabs', () => {
     secureStore.__store.set(RELAY_URL_KEY, SANDBOX_BASE);
     secureStore.__store.set(AUTH_TOKEN_KEY, 'good-token');
     gateway = createMockGateway();
-    // The Overview dashboard fetches details + git status + quick actions + the
-    // tree root as it mounts — register cloned-repo defaults.
+    // The Overview dashboard fetches details + git status + quick actions as it
+    // mounts (the Files tab fetches the tree root) — register cloned-repo defaults.
     gateway.on('GET', detailsUrl(), () => ({ body: repoDetails() }));
     gateway.on('GET', gitStatusUrl(), () => ({ body: gitStatus() }));
     gateway.on('GET', quickActionsUrl(), () => ({ body: { quickActions: [] } }));
@@ -215,6 +222,21 @@ describe('RepoPage shell + Overview dashboard/Branches tabs', () => {
     // The Overview "Continue chats" preview reads the chat list — default empty
     // (the section renders nothing), overridden per-test.
     gateway.on('GET', chatsUrl(), () => ({ body: { chats: [] } }));
+    // The Source Control tab defaults to the Graph segment, which fetches the
+    // commit graph (portable.dev#17) — register an empty graph so it settles
+    // cleanly, plus the working-tree status the push/pull header always reads.
+    gateway.on('GET', graphUrl(), () => ({ body: { nodes: [] } }));
+    gateway.on('GET', statusUrl(), () => ({
+      body: {
+        branch: 'main',
+        ahead: 0,
+        behind: 0,
+        staged: [],
+        unstaged: [],
+        untracked: [],
+        conflicted: [],
+      },
+    }));
     onlineManager.setOnline(true);
   });
 
@@ -234,14 +256,19 @@ describe('RepoPage shell + Overview dashboard/Branches tabs', () => {
       expect(screen.getByTestId(`repo-tab-${key}`)).toBeTruthy();
     }
     // …and the count of rendered tab buttons equals the wired set (no extras).
-    expect(REPO_TAB_KEYS).toHaveLength(8);
+    expect(REPO_TAB_KEYS).toHaveLength(11);
     expect(screen.queryByTestId('repo-tab-webhooks')).toBeNull();
     expect(screen.queryByTestId('repo-tab-routines')).toBeNull();
     expect(screen.queryByTestId('repo-tab-bogus')).toBeNull();
 
-    // Canonical order + display labels: PRs / Details, branches second-to-last.
+    // Canonical order + display labels: the source-control surfaces
+    // (portable.dev#17) right after Overview, then Files (the directory tree,
+    // promoted out of the Overview dashboard), then the GitHub surfaces.
     expect(REPO_TABS.map((t) => t.key)).toEqual([
       'overview',
+      'source-control',
+      'worktrees',
+      'files',
       'issues',
       'prs',
       'actions',
@@ -252,6 +279,9 @@ describe('RepoPage shell + Overview dashboard/Branches tabs', () => {
     ]);
     expect(REPO_TABS.find((t) => t.key === 'prs')?.label).toBe('PRs');
     expect(REPO_TABS.find((t) => t.key === 'settings')?.label).toBe('Details');
+    expect(REPO_TABS.find((t) => t.key === 'source-control')?.label).toBe('Source Control');
+    expect(REPO_TABS.find((t) => t.key === 'worktrees')?.label).toBe('Worktrees');
+    expect(REPO_TABS.find((t) => t.key === 'files')?.label).toBe('Files');
   });
 
   it('ignores an unknown ?tab= param and falls back to the wired default (overview)', async () => {
@@ -268,7 +298,36 @@ describe('RepoPage shell + Overview dashboard/Branches tabs', () => {
     await waitFor(() => expect(screen.getByTestId('repo-branches-list')).toBeTruthy());
   });
 
-  it('renders the working dashboard for a cloned repo (input, quick actions, git bar, tree)', async () => {
+  it('honors ?tab=source-control and renders the Source Control tab for a cloned repo', async () => {
+    mount(newQueryClient(), { tab: 'source-control' });
+
+    expect(screen.getByTestId('repo-active-tab').props.children).toBe('source-control');
+    await waitFor(() => expect(screen.getByTestId('source-control-tab')).toBeTruthy());
+    expect(screen.queryByTestId('source-control-clone-gate')).toBeNull();
+  });
+
+  it('honors ?tab=worktrees and renders the Worktrees tab for a cloned repo', async () => {
+    mount(newQueryClient(), { tab: 'worktrees' });
+
+    expect(screen.getByTestId('repo-active-tab').props.children).toBe('worktrees');
+    await waitFor(() => expect(screen.getByTestId('worktrees-tab')).toBeTruthy());
+    expect(screen.queryByTestId('worktrees-clone-gate')).toBeNull();
+  });
+
+  it('gates Source Control + Worktrees on the repo being cloned locally', async () => {
+    gateway.on('GET', detailsUrl(), () => ({ body: repoDetails({ isLocal: false }) }));
+
+    mount(newQueryClient(), { tab: 'source-control' });
+
+    await waitFor(() => expect(screen.getByTestId('source-control-clone-gate')).toBeTruthy());
+    expect(screen.queryByTestId('source-control-tab')).toBeNull();
+
+    fireEvent.press(screen.getByTestId('repo-tab-worktrees'));
+    await waitFor(() => expect(screen.getByTestId('worktrees-clone-gate')).toBeTruthy());
+    expect(screen.queryByTestId('worktrees-tab')).toBeNull();
+  });
+
+  it('renders the working dashboard for a cloned repo (input, quick actions, git bar)', async () => {
     gateway.on('GET', gitStatusUrl(), () => ({
       body: gitStatus({ ahead: 2, behind: 1, staged: 1, modified: 1, untracked: 1 }),
     }));
@@ -282,21 +341,6 @@ describe('RepoPage shell + Overview dashboard/Branches tabs', () => {
             prompt: 'Start the dev server',
             hasStatusDot: true,
             statusDotColor: 'green',
-          },
-        ],
-      },
-    }));
-    gateway.on('GET', treeUrl(), () => ({
-      body: {
-        contents: [
-          { name: 'src', path: 'src', type: 'directory', hasChildren: true, isHidden: false },
-          {
-            name: 'package.json',
-            path: 'package.json',
-            type: 'file',
-            size: 120,
-            lastModified: Date.now() - 60_000,
-            isHidden: false,
           },
         ],
       },
@@ -321,12 +365,49 @@ describe('RepoPage shell + Overview dashboard/Branches tabs', () => {
     expect(screen.getByTestId('repo-git-changed')).toHaveTextContent(/3 changed/);
     expect(screen.queryByTestId('repo-git-up-to-date')).toBeNull();
 
+    // The directory tree is NOT on the Overview anymore — it lives in the Files tab.
+    expect(screen.queryByTestId('repo-tree')).toBeNull();
+  });
+
+  it('honors ?tab=files and renders the directory tree for a cloned repo', async () => {
+    gateway.on('GET', treeUrl(), () => ({
+      body: {
+        contents: [
+          { name: 'src', path: 'src', type: 'directory', hasChildren: true, isHidden: false },
+          {
+            name: 'package.json',
+            path: 'package.json',
+            type: 'file',
+            size: 120,
+            lastModified: Date.now() - 60_000,
+            isHidden: false,
+          },
+        ],
+      },
+    }));
+
+    mount(newQueryClient(), { tab: 'files' });
+
+    expect(screen.getByTestId('repo-active-tab').props.children).toBe('files');
+    await waitFor(() => expect(screen.getByTestId('files-tab')).toBeTruthy());
+    expect(screen.queryByTestId('files-clone-gate')).toBeNull();
+
     // File tree rows (dirs first — backend ordering preserved).
     await waitFor(() => expect(screen.getByTestId('repo-tree-node-src')).toBeTruthy());
     expect(screen.getByTestId('repo-tree-node-package.json')).toBeTruthy();
   });
 
-  it('renders the "Continue chats" preview with only THIS repo\'s chats (above the file tree)', async () => {
+  it('gates the Files tab on the repo being cloned locally', async () => {
+    gateway.on('GET', detailsUrl(), () => ({ body: repoDetails({ isLocal: false }) }));
+
+    mount(newQueryClient(), { tab: 'files' });
+
+    await waitFor(() => expect(screen.getByTestId('files-clone-gate')).toBeTruthy());
+    expect(screen.queryByTestId('files-tab')).toBeNull();
+    expect(screen.queryByTestId('repo-tree')).toBeNull();
+  });
+
+  it('renders the "Continue chats" preview with only THIS repo\'s chats', async () => {
     const chat = (over: Record<string, unknown>) => ({
       id: 'c1',
       type: 'claude_code',
@@ -351,8 +432,6 @@ describe('RepoPage shell + Overview dashboard/Branches tabs', () => {
     // …another repo's chat and this repo's archived chat do NOT.
     expect(screen.queryByTestId('home-chat-other')).toBeNull();
     expect(screen.queryByTestId('home-chat-archived')).toBeNull();
-    // The file tree still renders below the preview.
-    expect(screen.getByTestId('repo-tree')).toBeTruthy();
   });
 
   it('shows ✓ up to date when the working tree is clean', async () => {
@@ -387,7 +466,7 @@ describe('RepoPage shell + Overview dashboard/Branches tabs', () => {
     }));
 
     const navigate = jest.fn();
-    mount(newQueryClient(), { navigate });
+    mount(newQueryClient(), { tab: 'files', navigate });
 
     await waitFor(() => expect(screen.getByTestId('repo-tree-node-src')).toBeTruthy());
     // The child level is NOT fetched until the folder expands.
@@ -418,7 +497,7 @@ describe('RepoPage shell + Overview dashboard/Branches tabs', () => {
       },
     }));
 
-    mount(newQueryClient());
+    mount(newQueryClient(), { tab: 'files' });
 
     // Expand a folder so its level is mounted (a separate useRepoTree instance).
     await waitFor(() => expect(screen.getByTestId('repo-tree-node-src')).toBeTruthy());

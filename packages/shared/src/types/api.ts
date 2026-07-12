@@ -20,6 +20,9 @@ import {
   Tree,
   LocalRepository,
   GitHubUserProfile,
+  CommitGraphNode,
+  ChangedFile,
+  Worktree,
 } from './github.js';
 
 /**
@@ -1209,4 +1212,92 @@ export interface TranscribeResponse {
 export interface VoicePhrasesResponse {
   phrases: string[];
   version: number;
+}
+
+/**
+ * ============================================================================
+ * MOBILE SOURCE CONTROL ENDPOINTS (portable.dev#17)
+ * Mounted at /api/source-control. Purely additive. Backed by the repo's local
+ * clone under the workspace dir via the git CLI (NOT the GitHub REST API).
+ * ============================================================================
+ */
+
+/** GET /api/source-control/:owner/:repo/graph */
+export interface GetCommitGraphResponse {
+  nodes: CommitGraphNode[];
+  nextCursor?: string;
+  defaultBranch?: string;
+  /** Present when a resource limit forced a degraded/empty result. */
+  degraded?: boolean;
+}
+
+/** GET /api/source-control/:owner/:repo/commit/:sha */
+export interface GetCommitDetailResponse {
+  sha: string;
+  files: ChangedFile[];
+  diff: string;
+  stats?: { additions: number; deletions: number };
+}
+
+/** GET /api/source-control/:owner/:repo/status */
+export interface GetWorkingTreeChangesResponse {
+  branch: string;
+  ahead: number;
+  behind: number;
+  staged: ChangedFile[];
+  unstaged: ChangedFile[];
+  untracked: ChangedFile[];
+  conflicted: ChangedFile[];
+}
+
+/** GET /api/source-control/:owner/:repo/file-diff */
+export interface GetFileDiffResponse {
+  path: string;
+  diff: string;
+}
+
+/** GET /api/source-control/:owner/:repo/worktrees */
+export interface GetWorktreesResponse {
+  worktrees: Worktree[];
+}
+
+/** POST /api/source-control/:owner/:repo/commit */
+export interface CommitResponse {
+  sha: string;
+  branch?: string;
+  author?: string;
+}
+
+/** POST /api/source-control/:owner/:repo/push */
+export interface PushResponse {
+  pushed: boolean;
+  branch?: string;
+  ahead?: number;
+  behind?: number;
+}
+
+/** POST /api/source-control/:owner/:repo/pull */
+export interface PullResponse {
+  pulled: boolean;
+  /**
+   * The pull hit merge conflicts and stopped: the working tree now has
+   * unmerged files (`pulled: false`). Push stays blocked until they are
+   * resolved. Absent on a clean pull.
+   */
+  conflicts?: boolean;
+  branch?: string;
+  ahead?: number;
+  behind?: number;
+}
+
+/** POST /api/source-control/:owner/:repo/stage | /unstage | /discard */
+export interface StageResponse {
+  ok: boolean;
+  paths: string[];
+}
+
+/** POST mutation result for worktree create/remove/prune (reserved for a follow-up issue). */
+export interface WorktreeMutationResponse {
+  ok: boolean;
+  worktrees?: Worktree[];
 }

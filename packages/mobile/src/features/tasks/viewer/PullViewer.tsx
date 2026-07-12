@@ -10,15 +10,16 @@
  *   the Conversation | Files (N) tabs:
  *     - Conversation: the description card (markdown) + the FULL timeline.
  *       READ-ONLY — there is no comment composer; don't invent one.
- *     - Files: per-file collapsible blocks (+N/−N), patch lines rendered
- *       natively, "No diff
- *       available (binary file or large file)" when `patch` is absent.
+ *     - Files: per-file collapsible blocks (+N/−N), the patch rendered by the
+ *       shared {@link UnifiedDiffView}, "No diff available (binary file or
+ *       large file)" when `patch` is absent.
  */
 
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { Icon, useAppTheme, withAlpha } from '../../../theme';
+import { UnifiedDiffView } from '../../../components/UnifiedDiffView';
+import { Icon, useAppTheme } from '../../../theme';
 // Direct FILE import (not the chat barrel) — established pattern.
 import { MarkdownText } from '../../chat/blocks/MarkdownText';
 import { useRepoPull, type PullFile } from '../../repo/useRepoPull';
@@ -335,56 +336,13 @@ function FileBlock({ file }: { file: PullFile }) {
       </Pressable>
       {expanded ? (
         file.patch ? (
-          <ScrollView
-            style={[styles.patchBox, { borderColor: theme.colors.border }]}
-            nestedScrollEnabled
-            testID={`pull-viewer-patch-${file.filename}`}
-          >
-            <PatchLines patch={file.patch} />
-          </ScrollView>
+          <UnifiedDiffView diff={file.patch} testID={`pull-viewer-patch-${file.filename}`} />
         ) : (
           <Text style={[styles.noDiff, { color: theme.colors.textSecondary }]}>
             No diff available (binary file or large file)
           </Text>
         )
       ) : null}
-    </View>
-  );
-}
-
-/** Native unified-patch rendering. */
-function PatchLines({ patch }: { patch: string }) {
-  const { theme } = useAppTheme();
-  return (
-    <View style={styles.patchLines}>
-      {patch.split('\n').map((line, index) => {
-        const kind = line.startsWith('@@')
-          ? 'hunk'
-          : line.startsWith('+')
-            ? 'add'
-            : line.startsWith('-')
-              ? 'remove'
-              : 'context';
-        const color =
-          kind === 'hunk'
-            ? theme.colors.textTertiary
-            : kind === 'add'
-              ? theme.colors.success
-              : kind === 'remove'
-                ? theme.colors.danger
-                : theme.colors.textSecondary;
-        const backgroundColor =
-          kind === 'add'
-            ? withAlpha(theme.colors.success, '1A')
-            : kind === 'remove'
-              ? withAlpha(theme.colors.danger, '1A')
-              : undefined;
-        return (
-          <Text key={index} style={[styles.patchLine, { color, backgroundColor }]}>
-            {line || ' '}
-          </Text>
-        );
-      })}
     </View>
   );
 }
@@ -446,8 +404,5 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   fileName: { flex: 1, fontFamily: 'monospace', fontSize: 13 },
-  patchBox: { marginTop: 8, borderWidth: 1, borderRadius: 6, maxHeight: 500 },
-  patchLines: { padding: 8 },
-  patchLine: { fontFamily: 'monospace', fontSize: 11, lineHeight: 16 },
   noDiff: { textAlign: 'center', fontSize: 13, paddingVertical: 24 },
 });

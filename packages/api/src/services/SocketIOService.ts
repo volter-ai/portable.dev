@@ -456,6 +456,8 @@ export class SocketIOService {
           model?: string;
           permissions?: string;
           agentSetupId?: string;
+          /** Optional worktree path — the chat runs inside it (portable.dev#17). */
+          worktree?: string;
         },
         callback
       ) => {

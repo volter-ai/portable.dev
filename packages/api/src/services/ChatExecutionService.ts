@@ -104,7 +104,10 @@ export class ChatExecutionService {
     private externalClaudeSessionService?: import('./ExternalClaudeSessionService.js').ExternalClaudeSessionService,
     // rev12 D63: stop-on-send — an interactive send to a terminal-LIVE chat ends
     // the terminal session first (evidence-confirmed) so the send adopts in place.
-    private stopOnPcService?: import('./StopOnPcService.js').StopOnPcService
+    private stopOnPcService?: import('./StopOnPcService.js').StopOnPcService,
+    // portable.dev#17: validates a chat:create `worktree` path against the
+    // repo's real worktree set (start a chat INSIDE a worktree).
+    private sourceControlService?: import('./SourceControlService.js').SourceControlService
   ) {
     console.log('[ChatExecutionService] Initialized');
   }
@@ -645,6 +648,12 @@ export class ChatExecutionService {
       model: string;
       permissions: string;
       agentSetupId: string;
+      /**
+       * Optional absolute path of a git worktree of `owner/repo` — the chat
+       * then RUNS inside that worktree (persisted as its `repo_path`/cwd).
+       * Validated against the repo's real worktree set (portable.dev#17).
+       */
+      worktree?: string;
     }
   ): Promise<{
     success: boolean;
@@ -666,7 +675,7 @@ export class ChatExecutionService {
       archived: boolean;
     };
   }> {
-    const { chatId, type, title, owner, repo, model, permissions, agentSetupId } = data;
+    const { chatId, type, title, owner, repo, model, permissions, agentSetupId, worktree } = data;
     const { userId, authToken } = context;
 
     try {
@@ -790,8 +799,33 @@ export class ChatExecutionService {
         }
       }
 
+      // Start-from-a-worktree (portable.dev#17): a `worktree` path re-homes the
+      // chat's cwd INSIDE that worktree. Validated through SourceControlService's
+      // containment guard (inside the checkout, or listed by `git worktree list`)
+      // so an arbitrary directory can never become a chat cwd, and stat'd so a
+      // pruned/deleted worktree fails deterministically before anything persists.
+      let chatCwd = repo_path;
+      if (worktree) {
+        if (!this.sourceControlService) {
+          return { success: false, error: 'Worktree chats are not available' };
+        }
+        try {
+          chatCwd = await this.sourceControlService.resolveWorktreePath(repo_path, worktree);
+        } catch {
+          return { success: false, error: 'Invalid worktree path' };
+        }
+        try {
+          const worktreeStat = await fs.stat(chatCwd);
+          if (!worktreeStat.isDirectory()) {
+            return { success: false, error: 'Worktree not found on disk' };
+          }
+        } catch {
+          return { success: false, error: 'Worktree not found on disk' };
+        }
+      }
+
       console.log(
-        `[ChatExecutionService] ${userId} creating chat ${chatId} for ${owner}/${repo} at ${repo_path}, agentSetupId: ${agentSetupId || 'not set'}`
+        `[ChatExecutionService] ${userId} creating chat ${chatId} for ${owner}/${repo} at ${chatCwd}, agentSetupId: ${agentSetupId || 'not set'}`
       );
 
       // Save chat to database with actual path. `repo_full_name` is persisted so the
@@ -805,7 +839,7 @@ export class ChatExecutionService {
         type,
         title,
         status: 'completed', // Initial status (not yet running)
-        repoPath: repo_path,
+        repoPath: chatCwd,
         repoFullName: `${owner}/${repo}`,
         agentSetupId,
         model,
@@ -836,7 +870,7 @@ export class ChatExecutionService {
           title,
           messages: [],
           status: 'completed',
-          repo_path,
+          repo_path: chatCwd,
           repoFullName: `${owner}/${repo}`,
           model,
           permissions,
