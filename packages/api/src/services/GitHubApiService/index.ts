@@ -149,6 +149,12 @@ export class GitHubApiService {
           // Shared instance: 401s invalidate both cache layers, refetch, and
           // replay once with the fresh token (see octokitFactory).
           octokit: createUserOctokit(connection.token, {
+            // Target the connection's host API (GitHub Enterprise / Gitea);
+            // undefined for public github.com, so behaviour there is unchanged.
+            baseUrl:
+              connection.host && connection.host.apiBaseUrl !== 'https://api.github.com'
+                ? connection.host.apiBaseUrl
+                : undefined,
             refreshToken: () => this.refreshTokenAfter401(userId, authToken),
           }),
         });

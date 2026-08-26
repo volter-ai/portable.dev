@@ -73,10 +73,30 @@ export function repoLabel(repoPath: string | undefined): string | null {
 }
 
 /** GitHub owner avatar URL (16–64px) — same source the web cards use. */
-export function ownerAvatarUrl(repoPath: string | undefined, size = 48): string | null {
+/**
+ * Owner avatar URL for a repo path. Host-aware: defaults to public github.com
+ * (`https://github.com/<owner>.png`, unchanged), but when the repo's host is
+ * known — via `hostInfo.provider`/`hostInfo.hostUrl`, matching the optional
+ * `Repository.provider`/`hostUrl` fields the backend may supply — it targets
+ * that host. GitLab and generic hosts have no username-addressable avatar, so
+ * it returns null there and callers render an initials placeholder.
+ *
+ * Kept self-contained (mirrors `@vgit2/shared` `ownerAvatarUrl`) rather than
+ * importing the shared value, to avoid the metro `.js`→`.ts` shared-resolution
+ * caveat in the RN bundle.
+ */
+export function ownerAvatarUrl(
+  repoPath: string | undefined,
+  size = 48,
+  hostInfo?: { provider?: string; hostUrl?: string }
+): string | null {
   const full = getRepoFromPath(repoPath);
   const owner = full?.split('/')[0];
-  return owner ? `https://github.com/${owner}.png?size=${size}` : null;
+  if (!owner) return null;
+  const provider = hostInfo?.provider ?? 'github';
+  if (provider === 'gitlab' || provider === 'generic') return null;
+  const base = (hostInfo?.hostUrl ?? 'https://github.com').replace(/\/+$/, '');
+  return `${base}/${owner}.png?size=${size}`;
 }
 
 /** Minimal color subset the helpers index into (a `ThemeColors` slice). */
