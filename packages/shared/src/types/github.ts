@@ -3,6 +3,8 @@
  * These types define structures returned from GitHub API and Octokit
  */
 
+import type { GitProvider } from './git.js';
+
 /**
  * GitHub user/organization
  */
@@ -76,6 +78,14 @@ export interface Repository {
   default_branch: string;
   topics?: string[];
   visibility?: 'public' | 'private' | 'internal';
+  /**
+   * Which git host this repo lives on. Absent ⇒ 'github' (public github.com),
+   * so existing payloads are unchanged. Set by the backend when a repo is
+   * served from a self-hosted host so the UI can render host-aware avatars/links.
+   */
+  provider?: GitProvider;
+  /** Web base URL of the host (e.g. https://gitea.example.com). Absent ⇒ github.com. */
+  hostUrl?: string;
 }
 
 /**
@@ -280,13 +290,7 @@ export interface WorkflowRun {
   head_sha: string;
   status: 'queued' | 'in_progress' | 'completed';
   conclusion:
-    | 'success'
-    | 'failure'
-    | 'cancelled'
-    | 'skipped'
-    | 'timed_out'
-    | 'action_required'
-    | null;
+    'success' | 'failure' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required' | null;
   workflow_id: number;
   created_at: string;
   updated_at: string;

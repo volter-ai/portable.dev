@@ -8,12 +8,14 @@ import { Octokit } from '@octokit/rest';
 import { WORKSPACE_TMP_DIR } from '@vgit2/shared/browserConstants';
 import { WORKSPACE_DIR, getUserWorkspaceDir, debugLog } from '@vgit2/shared/constants';
 import * as constants from '@vgit2/shared/constants';
+import { DEFAULT_GIT_HOST, buildCloneUrl } from '@vgit2/shared/types';
 import { Request, Response } from 'express';
 
 import { runGit, GitResourceLimitError } from './git/runGit.js';
 
 import type { AuthService } from './AuthService.js';
 import type { ConnectionsService } from './ConnectionsService.js';
+import type { GitHost } from '@vgit2/shared/types';
 import type { RunGitOptions } from './git/runGit.js';
 import type { ReposCacheService } from './ReposCacheService.js';
 
@@ -222,7 +224,14 @@ export class GitLocalService {
       throw err;
     }
 
-    const repoPath = await this.cloneRepository(owner, repo, userId, token, branch);
+    const repoPath = await this.cloneRepository(
+      owner,
+      repo,
+      userId,
+      token,
+      branch,
+      activeConnection.host ?? DEFAULT_GIT_HOST
+    );
 
     if (this.reposCache) {
       const invalidated = this.reposCache.invalidateUser(userId);
@@ -434,7 +443,8 @@ export class GitLocalService {
     repo: string,
     userId: string,
     token?: string,
-    branch?: string
+    branch?: string,
+    host: GitHost = DEFAULT_GIT_HOST
   ): Promise<string> {
     const userWorkspace = getUserWorkspaceDir(userId);
     const repoPath = path.join(userWorkspace, owner, repo);
@@ -449,7 +459,7 @@ export class GitLocalService {
       return existing;
     }
 
-    const clonePromise = this.performClone(owner, repo, userId, repoPath, token, branch);
+    const clonePromise = this.performClone(owner, repo, userId, repoPath, token, branch, host);
     this.inFlightClones.set(repoPath, clonePromise);
 
     try {
@@ -470,7 +480,8 @@ export class GitLocalService {
     userId: string,
     repoPath: string,
     token?: string,
-    branch?: string
+    branch?: string,
+    host: GitHost = DEFAULT_GIT_HOST
   ): Promise<string> {
     const userWorkspace = getUserWorkspaceDir(userId);
 
@@ -491,8 +502,9 @@ export class GitLocalService {
       console.log(`[GitLocalService] [${userId}] Repository not found, cloning...`);
     }
 
-    // Build git clone URL WITHOUT token embedding (tokens should be handled via credential helper)
-    const cloneUrl = `https://github.com/${owner}/${repo}.git`;
+    // Build git clone URL WITHOUT token embedding (tokens should be handled via
+    // credential helper). Host-aware: github.com by default, else the connection's host.
+    const cloneUrl = buildCloneUrl(host, owner, repo);
 
     // --progress forces git to emit progress on stderr even when not attached
     // to a TTY, so we can surface clone progress to the logs.
@@ -507,7 +519,7 @@ export class GitLocalService {
       ? [
           'clone',
           ...(branch ? ['-b', branch] : []),
-          `https://***@github.com/${owner}/${repo}.git`,
+          cloneUrl.replace('https://', 'https://***@'),
           repoPath,
         ]
       : args;

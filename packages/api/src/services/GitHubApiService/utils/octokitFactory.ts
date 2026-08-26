@@ -14,6 +14,12 @@ interface RetryOptions {
 
 export interface CreateUserOctokitOptions {
   /**
+   * REST API base URL. Omitted ⇒ Octokit's default (`https://api.github.com`).
+   * Set it to talk to a GitHub-API-compatible host: GitHub Enterprise Server
+   * (`https://<host>/api/v3`) or a Gitea instance (`https://<host>/api/v1`).
+   */
+  baseUrl?: string;
+  /**
    * Called on the first 401 of a request. Should invalidate the token caches
    * and return a freshly-fetched token (or undefined when none is available).
    * If the returned token differs from the one that failed, the request is
@@ -76,6 +82,8 @@ function authorizationHeader(token: string): string {
 export function createUserOctokit(token: string, options: CreateUserOctokitOptions = {}): Octokit {
   const HardenedOctokit = getHardenedOctokit();
   const octokit = new HardenedOctokit({
+    // Undefined ⇒ Octokit's api.github.com default (public GitHub, unchanged).
+    ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
     request: {
       // 30s request timeout so a call never hangs forever when GitHub is
       // offline (canonical config shared by all per-user Octokit instances).

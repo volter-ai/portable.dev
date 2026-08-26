@@ -1,4 +1,7 @@
+import { resolveGitHost, DEFAULT_GIT_HOST, GIT_PROVIDERS } from '@vgit2/shared/types';
+
 import type { LocalSecretStore } from '@vgit2/shared/secrets';
+import type { GitHost, GitProvider } from '@vgit2/shared/types';
 
 /**
  * Local-first GitHub access via the OAuth **device flow**.
@@ -39,6 +42,13 @@ export interface StoredGitHubToken {
   login?: string;
   /** ISO 8601 timestamp the token was obtained. */
   obtainedAt: string;
+  /**
+   * Which git host this token targets. Absent ⇒ 'github' (public github.com),
+   * so existing stored tokens keep working unchanged.
+   */
+  provider?: GitProvider;
+  /** Web base URL of a self-hosted host (e.g. https://gitea.example.com). */
+  baseUrl?: string;
 }
 
 /** Device-code grant returned by GitHub at the start of the flow. */
@@ -134,8 +144,43 @@ export class LocalGitHubAuthService {
     return { connected: true, login: stored.login, scopes: stored.scopes };
   }
 
+  /**
+   * The git host this on-device token targets. Resolution order:
+   *   1. the persisted record's `provider`/`baseUrl`
+   *   2. env `PORTABLE_GIT_PROVIDER` + `PORTABLE_GIT_HOST` (+ optional
+   *      `PORTABLE_GIT_API_URL`) — the local-first way to point the launcher at
+   *      a self-hosted host without a phone-side connect flow
+   *   3. {@link DEFAULT_GIT_HOST} (public github.com)
+   * Always returns a fully-resolved host, so GitHub stays the default and the
+   * Octokit/clone/push paths never see an undefined host.
+   */
+  getGitHost(): GitHost {
+    const stored = this.getStored();
+    if (stored?.provider || stored?.baseUrl) {
+      return resolveGitHost(stored.provider ?? 'github', stored.baseUrl);
+    }
+    const envProvider = process.env.PORTABLE_GIT_PROVIDER?.trim().toLowerCase();
+    const envHost = process.env.PORTABLE_GIT_HOST?.trim();
+    if (envHost || (envProvider && envProvider !== 'github')) {
+      const provider = (GIT_PROVIDERS as readonly string[]).includes(envProvider ?? '')
+        ? (envProvider as GitProvider)
+        : 'github';
+      return resolveGitHost(
+        provider,
+        envHost,
+        process.env.PORTABLE_GIT_API_URL?.trim() || undefined
+      );
+    }
+    return DEFAULT_GIT_HOST;
+  }
+
   /** Persist a token (encrypted at rest). Used by the device flow and tests. */
-  setToken(token: string, scopes: string[] = this.scopes, login?: string): StoredGitHubToken {
+  setToken(
+    token: string,
+    scopes: string[] = this.scopes,
+    login?: string,
+    hostOpts?: { provider?: GitProvider; baseUrl?: string }
+  ): StoredGitHubToken {
     const trimmed = token?.trim();
     if (!trimmed) {
       throw new Error('[LocalGitHubAuthService] Refusing to store an empty GitHub token');
@@ -145,6 +190,8 @@ export class LocalGitHubAuthService {
       scopes,
       login,
       obtainedAt: new Date().toISOString(),
+      ...(hostOpts?.provider ? { provider: hostOpts.provider } : {}),
+      ...(hostOpts?.baseUrl ? { baseUrl: hostOpts.baseUrl } : {}),
     };
     this.store.setJSON(GITHUB_DEVICE_TOKEN_KEY, record);
     return record;

@@ -218,6 +218,23 @@ export type {
 } from './github.js';
 
 // ============================================================================
+// GIT PROVIDER TYPES (multi-host abstraction; GitHub is the default)
+// ============================================================================
+export type { GitProvider, GitHost } from './git.js';
+export {
+  GIT_PROVIDERS,
+  DEFAULT_GIT_HOST,
+  defaultApiBaseUrl,
+  resolveGitHost,
+  gitHostname,
+  buildCloneUrl,
+  ownerAvatarUrl,
+  gitCredentialUsername,
+  noreplyEmailDomain,
+  parseRepoSlug,
+} from './git.js';
+
+// ============================================================================
 // API TYPES
 // ============================================================================
 export type {

@@ -13,6 +13,8 @@ import { fetchWithTimeout } from '../utils/fetchWithTimeout.js';
 import type { LocalGitHubAuthService } from './LocalGitHubAuthService.js';
 import type { SecretsAdapter } from '../db/SecretsAdapter.js';
 import type {
+  GitProvider,
+  GitHost,
   ServiceConnection,
   ServiceConfig,
   AwsCredentials,
@@ -31,7 +33,13 @@ import type {
 } from '@vgit2/shared/types';
 
 /**
- * Result of checking for active GitHub connection
+ * Result of checking for the active git connection.
+ *
+ * Historically GitHub-only (hence the name); `provider`/`host` were added for
+ * multi-host support and are OPTIONAL so every existing construction site and
+ * cache entry stays valid — a missing `provider` means `'github'` and a missing
+ * `host` means {@link DEFAULT_GIT_HOST} (public github.com). Consumers resolve
+ * them with `connection.host ?? DEFAULT_GIT_HOST`.
  */
 export interface ActiveGitHubConnection {
   type: 'none' | 'oauth' | 'app';
@@ -39,6 +47,10 @@ export interface ActiveGitHubConnection {
   token?: string;
   /** ISO 8601 expiry of the token (GitHub App installation tokens only) */
   expiresAt?: string;
+  /** Which git host this token authenticates against. Absent ⇒ 'github'. */
+  provider?: GitProvider;
+  /** Resolved web/API base URLs for the target host. Absent ⇒ DEFAULT_GIT_HOST. */
+  host?: GitHost;
 }
 
 /**
@@ -1439,18 +1451,32 @@ output = json
         return { type: 'none' };
       }
       const status = this.localGitHubAuthService.getConnectionStatus();
+      // Which host this on-device token targets (github.com by default).
+      const host = this.localGitHubAuthService.getGitHost();
+      const providerLabel =
+        host.provider === 'github'
+          ? 'GitHub'
+          : host.provider.charAt(0).toUpperCase() + host.provider.slice(1);
       const syntheticConnection: ServiceConnection = {
         id: 'local-github',
         userId,
         connectionId: 'github_1',
-        displayName: status.login ? `GitHub (${status.login})` : 'GitHub',
+        displayName: status.login ? `${providerLabel} (${status.login})` : providerLabel,
+        // Kept as 'github' so the existing service-branch logic (token-cache
+        // reloads, route guards) is unaffected; the real host is on `provider`/`host`.
         service: 'github',
         serviceType: 'cli',
         credentials: {}, // Token lives in the local encrypted store, not in the row.
         isActive: true,
         connectedAt: new Date(),
       };
-      return { type: 'oauth', connection: syntheticConnection, token };
+      return {
+        type: 'oauth',
+        connection: syntheticConnection,
+        token,
+        provider: host.provider,
+        host,
+      };
     }
 
     // console.log(`[ConnectionsService] getActiveGitHubConnection for ${userId}`);
